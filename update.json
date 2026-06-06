@@ -1,7 +1,7 @@
 {
-  "version": "1.0.10",
-  "notes": "修复首次初始化安装语音依赖时 Homebrew 公式索引过旧导致失败的问题，安装 whisper-cli 和 ffmpeg 前会先执行 brew update，并在更新类错误时自动重试。",
-  "mainJsUrl": "https://raw.githubusercontent.com/Goblinzzzzzz/review-assistant-release/e01d9e0da5a0a0907c45b5ddcdf84e86937d279f/main.js",
-  "stylesCssUrl": "https://raw.githubusercontent.com/Goblinzzzzzz/review-assistant-release/e01d9e0da5a0a0907c45b5ddcdf84e86937d279f/styles.css",
-  "manifestUrl": "https://raw.githubusercontent.com/Goblinzzzzzz/review-assistant-release/e01d9e0da5a0a0907c45b5ddcdf84e86937d279f/manifest.json"
+  "version": "1.1.0",
+  "notes": "新增语音识别方式选择，支持腾讯云实时语音转写配置；优化腾讯云异常清理与数字转换配置；修复述职报告雷达图生成失败，改为独立 SVG 附件嵌入。",
+  "mainJsUrl": "https://raw.githubusercontent.com/Goblinzzzzzz/review-assistant-release/b21be0ec5a9440e76c0ec911aa4fad43285fa6dd/main.js",
+  "stylesCssUrl": "https://raw.githubusercontent.com/Goblinzzzzzz/review-assistant-release/b21be0ec5a9440e76c0ec911aa4fad43285fa6dd/styles.css",
+  "manifestUrl": "https://raw.githubusercontent.com/Goblinzzzzzz/review-assistant-release/b21be0ec5a9440e76c0ec911aa4fad43285fa6dd/manifest.json"
 }
