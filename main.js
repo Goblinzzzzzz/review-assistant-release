@@ -352,6 +352,27 @@ var ENABLE_LOCAL_VOICE_PLAYBACK = false;
 var REVIEW_ASSISTANT_PLUGIN_NAME = "惠居业务汇报管理";
 var REVIEW_ASSISTANT_WORKBENCH_TITLE = "惠居业务汇报工作台";
 var REVIEW_ASSISTANT_COPYRIGHT = "\xA9\uFE0F\u60E0\u5C45\u5E73\u53F0\u4EBA\u529B\u884C\u653F\u4E2D\u5FC3-\u4F51\u9E9F";
+var REVIEW_ASSISTANT_ICON_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" aria-hidden="true">
+  <defs>
+    <linearGradient id="reviewAssistantIconBg" x1="3" y1="3" x2="21" y2="21" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#14b8a6"/>
+      <stop offset="0.54" stop-color="#2563eb"/>
+      <stop offset="1" stop-color="#7c3aed"/>
+    </linearGradient>
+    <linearGradient id="reviewAssistantIconLine" x1="6.2" y1="17.4" x2="18.8" y2="9" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#facc15"/>
+      <stop offset="1" stop-color="#fb923c"/>
+    </linearGradient>
+  </defs>
+  <rect x="2.4" y="2.4" width="19.2" height="19.2" rx="5" fill="url(#reviewAssistantIconBg)"/>
+  <path d="M5.7 18.2V10l3.9-2.1v10.3H5.7Z" fill="#dffdfa" opacity="0.92"/>
+  <path d="M9.2 18.2V5.4h5.6v12.8H9.2Z" fill="#ffffff"/>
+  <path d="M14.4 18.2v-7l3.9 2v5h-3.9Z" fill="#e7ecff" opacity="0.94"/>
+  <path d="M10.8 8h2.5M10.8 10.7h2.5M10.8 13.4h2.5M6.9 12.2h1M6.9 14.6h1" stroke="#2563eb" stroke-width="1.05" stroke-linecap="round" opacity="0.82"/>
+  <path d="M5.8 17.2 9 14l2.8 2.1 5.7-6.3" fill="none" stroke="url(#reviewAssistantIconLine)" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="m16.5 9.7 1.2.1.1 1.2" fill="none" stroke="#fed7aa" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M5.2 18.4h13.6" stroke="#ffffff" stroke-width="1.15" stroke-linecap="round" opacity="0.8"/>
+</svg>`;
 var LEGACY_REVIEW_ASSISTANT_UPDATE_MANIFEST_URL = "https://raw.githubusercontent.com/Goblinzzzzzz/review-assistant-release/main/update.json";
 var REVIEW_ASSISTANT_UPDATE_MANIFEST_URL = "https://raw.githubusercontent.com/Goblinzzzzzz/review-assistant-release/refs/heads/main/update.json";
 function isBundledWhisperModelPath(modelPath) {
@@ -4128,7 +4149,8 @@ var ReviewPanelView = class extends import_obsidian3.ItemView {
   renderNoUsers(container) {
     container.createDiv({ cls: "review-main" }, (main) => {
       main.createDiv({ cls: "review-empty-small" }, (empty) => {
-        empty.createDiv({ cls: "review-empty-icon", text: "\u8FF0" });
+        const icon = empty.createDiv({ cls: "review-empty-icon review-empty-icon-logo" });
+        (0, import_obsidian3.setIcon)(icon, "review-assistant-icon");
         empty.createDiv({ cls: "review-empty-title", text: "\u5148\u6DFB\u52A0\u8FF0\u804C\u4EBA" });
         empty.createDiv({ cls: "review-empty-desc", text: "\u9996\u6B21\u4F7F\u7528\u65F6\u9700\u8981\u7531\u5404\u57CE\u5E02\u81EA\u884C\u914D\u7F6E\u8FF0\u804C\u4EBA\u3001\u5C97\u4F4D\u548C\u5173\u6CE8\u6307\u6807\u3002" });
         empty.createDiv({ cls: "review-empty-actions" }, (actions) => {
@@ -4144,7 +4166,8 @@ var ReviewPanelView = class extends import_obsidian3.ItemView {
   renderHeader(container) {
     container.createDiv({ cls: "review-topbar" }, (header) => {
       header.createDiv({ cls: "review-title-block" }, (title) => {
-        title.createDiv({ cls: "review-logo-dot", text: "\u8FF0" });
+        const logo = title.createDiv({ cls: "review-logo-dot" });
+        (0, import_obsidian3.setIcon)(logo, "review-assistant-icon");
         title.createDiv({ cls: "review-title-text" }, (text) => {
           text.createDiv({ cls: "review-title", text: REVIEW_ASSISTANT_WORKBENCH_TITLE });
           text.createDiv({ cls: "review-subtitle", text: this.statusText });
@@ -4892,11 +4915,7 @@ var ReviewAssistantPlugin = class extends import_obsidian4.Plugin {
       this.app,
       this.settingsManager.get("storagePath") || DEFAULT_SETTINGS.storagePath
     );
-    (0, import_obsidian4.addIcon)("review-assistant-icon", `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-      <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/>
-      <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
-      <line x1="12" x2="12" y1="19" y2="22"/>
-    </svg>`);
+    (0, import_obsidian4.addIcon)("review-assistant-icon", REVIEW_ASSISTANT_ICON_SVG);
     this.registerView(VIEW_TYPE_REVIEW_PANEL, (leaf) => new ReviewPanelView(leaf, this));
     this.addRibbonIcon("review-assistant-icon", `\u6253\u5F00${REVIEW_ASSISTANT_PLUGIN_NAME}`, () => {
       this.activateView();

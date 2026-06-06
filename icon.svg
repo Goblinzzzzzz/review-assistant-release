@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" aria-hidden="true">
+  <defs>
+    <linearGradient id="reviewAssistantIconBg" x1="3" y1="3" x2="21" y2="21" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#14b8a6"/>
+      <stop offset="0.54" stop-color="#2563eb"/>
+      <stop offset="1" stop-color="#7c3aed"/>
+    </linearGradient>
+    <linearGradient id="reviewAssistantIconLine" x1="6.2" y1="17.4" x2="18.8" y2="9" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#facc15"/>
+      <stop offset="1" stop-color="#fb923c"/>
+    </linearGradient>
+  </defs>
+  <rect x="2.4" y="2.4" width="19.2" height="19.2" rx="5" fill="url(#reviewAssistantIconBg)"/>
+  <path d="M5.7 18.2V10l3.9-2.1v10.3H5.7Z" fill="#dffdfa" opacity="0.92"/>
+  <path d="M9.2 18.2V5.4h5.6v12.8H9.2Z" fill="#ffffff"/>
+  <path d="M14.4 18.2v-7l3.9 2v5h-3.9Z" fill="#e7ecff" opacity="0.94"/>
+  <path d="M10.8 8h2.5M10.8 10.7h2.5M10.8 13.4h2.5M6.9 12.2h1M6.9 14.6h1" stroke="#2563eb" stroke-width="1.05" stroke-linecap="round" opacity="0.82"/>
+  <path d="M5.8 17.2 9 14l2.8 2.1 5.7-6.3" fill="none" stroke="url(#reviewAssistantIconLine)" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="m16.5 9.7 1.2.1.1 1.2" fill="none" stroke="#fed7aa" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M5.2 18.4h13.6" stroke="#ffffff" stroke-width="1.15" stroke-linecap="round" opacity="0.8"/>
+</svg>
