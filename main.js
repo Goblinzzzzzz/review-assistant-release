@@ -2739,7 +2739,7 @@ var DataService = class {
   /**
    * 创建述职材料
    */
-  async createMaterial(data) {
+  async createMaterial(data, options = {}) {
     var _a2;
     const dateObj = new Date(data.date);
     const week = getWeekNumber(dateObj);
@@ -2747,12 +2747,21 @@ var DataService = class {
     const weekNum = ((_a2 = week.match(/第(\d+)周/)) == null ? void 0 : _a2[1]) || "1";
     const folderPath = `${this.basePath}/\u8FF0\u804C\u6750\u6599/${year}\u5E74/\u7B2C${weekNum}\u5468`;
     const fileName = `${data.userName}_${data.date}.md`;
-    const filePath = `${folderPath}/${fileName}`;
+    let filePath = `${folderPath}/${fileName}`;
     await this.ensureFolder(folderPath);
     const content = this.generateMaterialTemplate(data, week);
     const existing = this.app.vault.getAbstractFileByPath(filePath);
     if (existing instanceof import_obsidian.TFile) {
-      return existing;
+      if (!options.forceNew) {
+        return existing;
+      }
+      const stamp = (/* @__PURE__ */ new Date()).toISOString().replace(/[-:T.Z]/g, "").slice(0, 14);
+      let counter = 1;
+      do {
+        const suffix = counter === 1 ? stamp : `${stamp}_${counter}`;
+        filePath = `${folderPath}/${data.userName}_${data.date}_${suffix}.md`;
+        counter += 1;
+      } while (this.app.vault.getAbstractFileByPath(filePath) instanceof import_obsidian.TFile);
     }
     return await this.app.vault.create(filePath, content);
   }
@@ -3647,8 +3656,14 @@ var ReviewPanelView = class extends import_obsidian3.ItemView {
         });
       });
       header.createDiv({ cls: "review-top-actions" }, (actions) => {
+        const newReview = actions.createEl("button", { cls: "review-top-action-btn", text: "\u65B0\u8FF0\u804C" });
+        newReview.title = "\u4E3A\u5F53\u524D\u8FF0\u804C\u4EBA\u521B\u5EFA\u5168\u65B0\u6750\u6599";
+        newReview.disabled = this.isProcessing || !this.activeItem;
+        newReview.addEventListener("click", async () => {
+          await this.startFreshReview();
+        });
         const refresh = actions.createEl("button", { cls: "review-icon-button", text: "\u21BB" });
-        refresh.title = "\u5237\u65B0\u6750\u6599";
+        refresh.title = "\u5237\u65B0\u6750\u6599\u5217\u8868";
         refresh.addEventListener("click", async () => {
           await this.initializeSession();
           this.statusText = "\u5DF2\u5237\u65B0\u6750\u6599\u5217\u8868";
@@ -3656,6 +3671,16 @@ var ReviewPanelView = class extends import_obsidian3.ItemView {
         });
       });
     });
+  }
+  async startFreshReview() {
+    if (!this.activeItem)
+      return;
+    this.conversationHistory = [];
+    this.currentQuestion = "";
+    this.currentAnswer = "";
+    this.followUpCount = 0;
+    this.activeItem.status = "not-started";
+    await this.plugin.createNewMaterial(this.activeItem.user, true);
   }
   renderPeopleStrip(container) {
     container.createDiv({ cls: "review-people-strip" }, (strip2) => {
@@ -4407,7 +4432,7 @@ var ReviewAssistantPlugin = class extends import_obsidian4.Plugin {
   /**
    * 创建新述职材料
    */
-  async createNewMaterial(selectedUser) {
+  async createNewMaterial(selectedUser, forceNew = false) {
     const users = this.settingsManager.get("users");
     if (users.length === 0) {
       new import_obsidian4.Notice("\u8BF7\u5148\u5728\u8BBE\u7F6E\u4E2D\u914D\u7F6E\u8FF0\u804C\u4EBA");
@@ -4420,7 +4445,7 @@ var ReviewAssistantPlugin = class extends import_obsidian4.Plugin {
         userName: user.name,
         role: user.role,
         date: today
-      });
+      }, { forceNew });
       const leaf = this.app.workspace.getLeaf("tab");
       await leaf.openFile(file);
       new import_obsidian4.Notice(`\u5DF2\u521B\u5EFA\u8FF0\u804C\u6750\u6599\uFF1A${file.name}`);
