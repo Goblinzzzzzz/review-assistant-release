@@ -188,6 +188,7 @@
 }
 
 .review-icon-button,
+.review-top-action-btn,
 .review-link-btn {
   border: none;
   background: transparent;
@@ -203,10 +204,24 @@
   font-size: 14px;
 }
 
+.review-top-action-btn {
+  height: 28px;
+  padding: 0 8px;
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
 .review-icon-button:hover,
+.review-top-action-btn:hover:not(:disabled),
 .review-link-btn:hover {
   background: var(--review-hover);
   color: var(--text-normal);
+}
+
+.review-top-action-btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
 }
 
 .review-link-btn {
