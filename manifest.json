@@ -1,10 +1,10 @@
 {
   "id": "review-assistant",
   "name": "惠居业务汇报管理",
-  "version": "1.0.6",
+  "version": "1.0.7",
   "minAppVersion": "1.0.0",
   "description": "基于《超越指标》的述职评价工具，支持AI犀利追问和五维度点评",
   "author": "惠居平台人力行政中心-佑麟",
   "authorUrl": "https://github.com/Goblinzzzzzz",
-  "isDesktopOnly": false
+  "isDesktopOnly": true
 }
