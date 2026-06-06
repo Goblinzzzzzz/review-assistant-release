@@ -345,6 +345,12 @@ var DEFAULT_WHISPER_MODEL_KEY = "large-v3-turbo";
 var DEFAULT_WHISPER_MODEL_FILE = "ggml-large-v3-turbo.bin";
 var DEFAULT_WHISPER_MODEL_PATH = `${home}/.whisper-models/${DEFAULT_WHISPER_MODEL_FILE}`;
 var BUNDLED_WHISPER_MODEL_PATHS = WHISPER_MODEL_PRESETS.map((preset) => `${home}/.whisper-models/${preset.fileName}`);
+var SPEECH_RECOGNITION_PROVIDER_LOCAL = "local";
+var SPEECH_RECOGNITION_PROVIDER_HTTP = "http";
+var SPEECH_RECOGNITION_PROVIDER_TENCENT_REALTIME = "tencent_realtime";
+var TENCENT_ASR_DEFAULT_ENGINE = "16k_zh";
+var TENCENT_ASR_DEFAULT_SAMPLE_RATE = 16e3;
+var TENCENT_ASR_PACKET_SAMPLE_COUNT = 3200;
 var HOMEBREW_INSTALL_COMMAND = `/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"`;
 var BREW_INSTALL_DEPENDENCIES_COMMAND = "brew update && brew install whisper-cpp ffmpeg";
 var MOMA_API_BASE_URL = "https://next.ke.com/ob/api";
@@ -385,6 +391,75 @@ function isBundledWhisperModelPath(modelPath) {
 function isLegacyBuiltInAiBaseUrl(baseUrl) {
   return !baseUrl || ["https://api.anthropic.com", "https://prd-assistant-backend.ke.com/api"].includes(baseUrl);
 }
+function normalizeSpeechRecognitionProvider(provider) {
+  if (provider === SPEECH_RECOGNITION_PROVIDER_TENCENT_REALTIME || provider === SPEECH_RECOGNITION_PROVIDER_HTTP) {
+    return provider;
+  }
+  return SPEECH_RECOGNITION_PROVIDER_LOCAL;
+}
+function encodeTencentQueryValue(value) {
+  return encodeURIComponent(String(value));
+}
+function buildTencentAsrWebSocketUrl(settings) {
+  const appId = String(settings.get("tencentAsrAppId") || "").trim();
+  const secretId = String(settings.get("tencentAsrSecretId") || "").trim();
+  const secretKey = String(settings.get("tencentAsrSecretKey") || "").trim();
+  if (!appId || !secretId || !secretKey) {
+    throw new Error("\u8BF7\u5148\u586B\u5199\u817E\u8BAF\u4E91 AppID\u3001SecretID \u548C SecretKey");
+  }
+  const now = Math.floor(Date.now() / 1e3);
+  const configuredEngine = String(settings.get("tencentAsrEngineModelType") || TENCENT_ASR_DEFAULT_ENGINE).trim();
+  const engineModelType = ["16k_zh", "16k_zh_en"].includes(configuredEngine) ? configuredEngine : TENCENT_ASR_DEFAULT_ENGINE;
+  const params = {
+    engine_model_type: engineModelType,
+    expired: now + 3600,
+    filter_modal: Number(settings.get("tencentAsrFilterModal") || 0),
+    filter_punc: Number(settings.get("tencentAsrFilterPunc") || 0),
+    convert_num_mode: Number(settings.get("tencentAsrConvertNumMode") || 1),
+    needvad: settings.get("tencentAsrNeedVad") === false ? 0 : 1,
+    nonce: Math.floor(Math.random() * 1e10),
+    secretid: secretId,
+    timestamp: now,
+    voice_format: 1,
+    voice_id: uuid4().replace(/-/g, "")
+  };
+  const hotwordList = String(settings.get("tencentAsrHotwordList") || "").trim();
+  if (hotwordList) {
+    params.hotword_list = hotwordList;
+  }
+  const sortedKeys = Object.keys(params).sort();
+  const rawQuery = sortedKeys.map((key) => `${key}=${params[key]}`).join("&");
+  const signText = `asr.cloud.tencent.com/asr/v2/${appId}?${rawQuery}`;
+  const crypto = require("crypto");
+  const signature = crypto.createHmac("sha1", secretKey).update(signText).digest("base64");
+  const finalQuery = sortedKeys.map((key) => `${key}=${encodeTencentQueryValue(params[key])}`).join("&");
+  return `wss://asr.cloud.tencent.com/asr/v2/${appId}?${finalQuery}&signature=${encodeTencentQueryValue(signature)}`;
+}
+function resampleFloat32To16k(input, inputSampleRate) {
+  if (!input || input.length === 0)
+    return new Float32Array(0);
+  if (inputSampleRate === TENCENT_ASR_DEFAULT_SAMPLE_RATE)
+    return input;
+  const ratio = inputSampleRate / TENCENT_ASR_DEFAULT_SAMPLE_RATE;
+  const outputLength = Math.max(1, Math.floor(input.length / ratio));
+  const output = new Float32Array(outputLength);
+  for (let i = 0; i < outputLength; i++) {
+    const sourceIndex = i * ratio;
+    const left = Math.floor(sourceIndex);
+    const right = Math.min(input.length - 1, left + 1);
+    const weight = sourceIndex - left;
+    output[i] = input[left] * (1 - weight) + input[right] * weight;
+  }
+  return output;
+}
+function float32ToInt16Samples(input) {
+  const output = new Int16Array(input.length);
+  for (let i = 0; i < input.length; i++) {
+    const sample = Math.max(-1, Math.min(1, input[i]));
+    output[i] = sample < 0 ? sample * 32768 : sample * 32767;
+  }
+  return output;
+}
 var DEFAULT_SETTINGS = {
   // AI配置
   claudeApiKey: "",
@@ -394,6 +469,15 @@ var DEFAULT_SETTINGS = {
   whisperApiKey: "",
   whisperApiType: "local",
   localWhisperUrl: "http://localhost:8080",
+  tencentAsrAppId: "",
+  tencentAsrSecretId: "",
+  tencentAsrSecretKey: "",
+  tencentAsrEngineModelType: TENCENT_ASR_DEFAULT_ENGINE,
+  tencentAsrNeedVad: true,
+  tencentAsrFilterModal: 0,
+  tencentAsrFilterPunc: 0,
+  tencentAsrConvertNumMode: 1,
+  tencentAsrHotwordList: "",
   homebrewPath: "",
   whisperCliPath: "/opt/homebrew/bin/whisper-cli",
   ffmpegPath: "",
@@ -430,6 +514,7 @@ var SettingsManager = class {
     if (!initialSettings.updateManifestUrl || initialSettings.updateManifestUrl === LEGACY_REVIEW_ASSISTANT_UPDATE_MANIFEST_URL) {
       this.settings.updateManifestUrl = REVIEW_ASSISTANT_UPDATE_MANIFEST_URL;
     }
+    this.settings.whisperApiType = normalizeSpeechRecognitionProvider(initialSettings.whisperApiType);
     this.settings.evaluationModel = normalizeEvaluationModel(initialSettings.evaluationModel || DEFAULT_EVALUATION_MODEL);
     this.saveCallback = saveCallback;
   }
@@ -457,10 +542,21 @@ var SettingsManager = class {
     return this.settings.claudeApiKey.trim().length > 0;
   }
   isVoiceConfigured() {
-    return this.settings.voiceSetupCompleted === true;
+    const provider = normalizeSpeechRecognitionProvider(this.settings.whisperApiType);
+    if (provider === SPEECH_RECOGNITION_PROVIDER_LOCAL) {
+      return this.settings.voiceSetupCompleted === true;
+    }
+    if (provider === SPEECH_RECOGNITION_PROVIDER_TENCENT_REALTIME) {
+      return Boolean(String(this.settings.tencentAsrAppId || "").trim() && String(this.settings.tencentAsrSecretId || "").trim() && String(this.settings.tencentAsrSecretKey || "").trim());
+    }
+    return Boolean(String(this.settings.localWhisperUrl || "").trim());
   }
   isOnboardingComplete() {
-    return this.isConfigured() && this.isVoiceConfigured() && this.settings.onboardingCompleted === true;
+    const provider = normalizeSpeechRecognitionProvider(this.settings.whisperApiType);
+    if (provider === SPEECH_RECOGNITION_PROVIDER_LOCAL) {
+      return this.isConfigured() && this.isVoiceConfigured() && this.settings.onboardingCompleted === true;
+    }
+    return this.isConfigured() && this.isVoiceConfigured();
   }
 };
 
@@ -4052,99 +4148,170 @@ var ReviewAssistantSettingTab = class extends import_obsidian2.PluginSettingTab 
       })
     );
 
-    const speechCard = this.createSettingsCard(container, "语音识别配置", "默认使用 large-v3-turbo 高精度中文识别模型，并保留本地路径和专业词提示。");
-    const currentModelPath = settings.get("whisperModelPath") || DEFAULT_WHISPER_MODEL_PATH;
-    const voiceStatus = await detectVoiceEnvironment(settings.getAll());
-    const statusDiv = speechCard.createDiv("whisper-status");
-    if (voiceStatus.ready) {
-      statusDiv.createEl("p", { text: `✅ 本地语音识别环境已就绪，当前模型：${voiceStatus.modelPath}`, cls: "setting-status-success" });
-    } else {
-      statusDiv.createEl("p", { text: `⚠️ 语音环境未就绪：${voiceStatus.missingItems.join("、") || "未知原因"}`, cls: "setting-status-warning" });
+    const speechCard = this.createSettingsCard(container, "语音识别配置", "可选择本地 Whisper、通用 HTTP 接口或腾讯云实时语音转写。");
+    const speechProvider = normalizeSpeechRecognitionProvider(settings.get("whisperApiType"));
+    new import_obsidian2.Setting(speechCard).setName("语音识别方式").setDesc("本地 Whisper 默认不上传音频；腾讯云实时转写会在录音时通过 WebSocket 上传音频流。").addDropdown(
+      (dropdown) => dropdown.addOption(SPEECH_RECOGNITION_PROVIDER_LOCAL, "本地 Whisper").addOption(SPEECH_RECOGNITION_PROVIDER_HTTP, "通用 HTTP API").addOption(SPEECH_RECOGNITION_PROVIDER_TENCENT_REALTIME, "腾讯云实时语音转写").setValue(speechProvider).onChange(async (value) => {
+        await settings.set("whisperApiType", normalizeSpeechRecognitionProvider(value));
+        this.display();
+      })
+    );
+    if (speechProvider === SPEECH_RECOGNITION_PROVIDER_LOCAL) {
+      const currentModelPath = settings.get("whisperModelPath") || DEFAULT_WHISPER_MODEL_PATH;
+      const voiceStatus = await detectVoiceEnvironment(settings.getAll());
+      const statusDiv = speechCard.createDiv("whisper-status");
+      if (voiceStatus.ready) {
+        statusDiv.createEl("p", { text: `✅ 本地语音识别环境已就绪，当前模型：${voiceStatus.modelPath}`, cls: "setting-status-success" });
+      } else {
+        statusDiv.createEl("p", { text: `⚠️ 语音环境未就绪：${voiceStatus.missingItems.join("、") || "未知原因"}`, cls: "setting-status-warning" });
+      }
+      statusDiv.createEl("p", { text: `Homebrew：${voiceStatus.homebrewPath || "未检测到"}` });
+      statusDiv.createEl("p", { text: `whisper-cli：${voiceStatus.cliPath || "未检测到"}` });
+      statusDiv.createEl("p", { text: `ffmpeg：${voiceStatus.ffmpegPath || "未检测到"}` });
+      statusDiv.createEl("p", { text: `模型文件：${voiceStatus.modelReady ? voiceStatus.modelPath : `未下载（${DEFAULT_WHISPER_MODEL_PATH}）`}` });
+      new import_obsidian2.Setting(speechCard).setName("语音环境初始化").setDesc("首次使用会自动准备 Homebrew、whisper-cli、ffmpeg 和默认模型；失败时可复制命令手动执行。").addButton(
+        (btn) => btn.setButtonText("一键准备").setCta().onClick(async () => {
+          try {
+            new import_obsidian2.Notice("开始准备本地语音环境");
+            let lastVoiceSetupNotice = "";
+            await prepareVoiceEnvironment(settings, (event) => {
+              const progressEvent = normalizeVoiceSetupEvent(event);
+              if (progressEvent.message && !progressEvent.detail && progressEvent.message !== lastVoiceSetupNotice) {
+                lastVoiceSetupNotice = progressEvent.message;
+                new import_obsidian2.Notice(progressEvent.message);
+              }
+            });
+            this.display();
+            new import_obsidian2.Notice("本地语音环境已就绪");
+          } catch (error) {
+            this.display();
+            new import_obsidian2.Notice(`语音环境准备失败：${error instanceof Error ? error.message : "未知错误"}`);
+          }
+        })
+      ).addButton(
+        (btn) => btn.setButtonText("重新检测").onClick(async () => {
+          await refreshVoiceSetupState(settings);
+          this.display();
+        })
+      ).addButton(
+        (btn) => btn.setButtonText("复制命令").onClick(async () => {
+          await copyTextToClipboard(getManualVoiceSetupCommand());
+          new import_obsidian2.Notice("已复制手动安装命令");
+        })
+      );
+      new import_obsidian2.Setting(speechCard).setName("Whisper CLI 路径").setDesc("whisper-cli 可执行文件的路径").addText(
+        (text) => text.setPlaceholder("/opt/homebrew/bin/whisper-cli").setValue(settings.get("whisperCliPath")).onChange(async (value) => {
+          await settings.set("whisperCliPath", value);
+          await settings.update({ voiceSetupCompleted: false, onboardingCompleted: false, voiceSetupStatus: "pending" });
+        })
+      );
+      new import_obsidian2.Setting(speechCard).setName("FFmpeg 路径").setDesc("ffmpeg 可执行文件的路径，留空时自动扫描常见路径。").addText(
+        (text) => text.setPlaceholder("/opt/homebrew/bin/ffmpeg").setValue(settings.get("ffmpegPath")).onChange(async (value) => {
+          await settings.set("ffmpegPath", value.trim());
+          await settings.update({ voiceSetupCompleted: false, onboardingCompleted: false, voiceSetupStatus: "pending" });
+        })
+      );
+      const modelPresetsDiv = speechCard.createDiv("whisper-model-presets");
+      new import_obsidian2.Setting(modelPresetsDiv).setName("默认高精度模型").setDesc(`插件固定默认使用 ${DEFAULT_WHISPER_MODEL_KEY}，中文准确率优先。`).addButton(
+        (btn) => btn.setButtonText("使用默认模型").onClick(async () => {
+          await setWhisperModelIfExists(settings, DEFAULT_WHISPER_MODEL_PATH);
+          await refreshVoiceSetupState(settings);
+          this.display();
+        })
+      );
+      new import_obsidian2.Setting(modelPresetsDiv).setName("重新下载默认模型").setDesc("缺少模型时可从 whisper.cpp 模型仓库下载。默认模型体积约 1.5GB。").addButton(
+        (btn) => btn.setButtonText("下载 large-v3-turbo").onClick(async () => {
+          const modelPath = await downloadWhisperModel(DEFAULT_WHISPER_MODEL_KEY);
+          await settings.set("whisperModelPath", modelPath);
+          await refreshVoiceSetupState(settings);
+          new import_obsidian2.Notice(`${DEFAULT_WHISPER_MODEL_KEY} 模型下载完成`);
+          this.display();
+        })
+      );
+      new import_obsidian2.Setting(speechCard).setName("高级：自定义模型路径").setDesc("通常无需修改。仅当你要使用其他本地 .bin 模型时填写。").addText(
+        (text) => text.setPlaceholder(DEFAULT_WHISPER_MODEL_PATH).setValue(currentModelPath).onChange(async (value) => {
+          await settings.set("whisperModelPath", value.trim() || DEFAULT_WHISPER_MODEL_PATH);
+          await settings.update({ voiceSetupCompleted: false, onboardingCompleted: false, voiceSetupStatus: "pending" });
+        })
+      );
+      new import_obsidian2.Setting(speechCard).setName("专业词提示词").setDesc("会传给 whisper-cli --prompt，用于提高中文业务词识别率").addTextArea(
+        (text) => text.setPlaceholder(DEFAULT_WHISPER_PROMPT).setValue(settings.get("whisperPrompt") || DEFAULT_WHISPER_PROMPT).onChange(async (value) => {
+          await settings.set("whisperPrompt", value);
+        })
+      );
     }
-    statusDiv.createEl("p", { text: `Homebrew：${voiceStatus.homebrewPath || "未检测到"}` });
-    statusDiv.createEl("p", { text: `whisper-cli：${voiceStatus.cliPath || "未检测到"}` });
-    statusDiv.createEl("p", { text: `ffmpeg：${voiceStatus.ffmpegPath || "未检测到"}` });
-    statusDiv.createEl("p", { text: `模型文件：${voiceStatus.modelReady ? voiceStatus.modelPath : `未下载（${DEFAULT_WHISPER_MODEL_PATH}）`}` });
-    new import_obsidian2.Setting(speechCard).setName("语音环境初始化").setDesc("首次使用会自动准备 Homebrew、whisper-cli、ffmpeg 和默认模型；失败时可复制命令手动执行。").addButton(
-      (btn) => btn.setButtonText("一键准备").setCta().onClick(async () => {
-        try {
-          new import_obsidian2.Notice("开始准备本地语音环境");
-          let lastVoiceSetupNotice = "";
-          await prepareVoiceEnvironment(settings, (event) => {
-            const progressEvent = normalizeVoiceSetupEvent(event);
-            if (progressEvent.message && !progressEvent.detail && progressEvent.message !== lastVoiceSetupNotice) {
-              lastVoiceSetupNotice = progressEvent.message;
-              new import_obsidian2.Notice(progressEvent.message);
-            }
+    if (speechProvider === SPEECH_RECOGNITION_PROVIDER_HTTP) {
+      new import_obsidian2.Setting(speechCard).setName("HTTP 转写服务地址").setDesc("会依次尝试 /transcribe、/v1/audio/transcriptions、/asr，并以 multipart/form-data 上传录音分段。").addText(
+        (text) => text.setPlaceholder("http://localhost:8080").setValue(settings.get("localWhisperUrl") || "").onChange(async (value) => {
+          await settings.set("localWhisperUrl", value.trim() || "http://localhost:8080");
+        })
+      );
+    }
+    if (speechProvider === SPEECH_RECOGNITION_PROVIDER_TENCENT_REALTIME) {
+      const statusDiv = speechCard.createDiv("whisper-status");
+      statusDiv.createEl("p", { text: "腾讯云实时语音转写需要先开通语音识别服务，并在腾讯云控制台创建 API 密钥。", cls: "setting-status-warning" });
+      new import_obsidian2.Setting(speechCard).setName("腾讯云 AppID").setDesc("腾讯云账号 AppID。").addText(
+        (text) => text.setPlaceholder("1250000000").setValue(settings.get("tencentAsrAppId") || "").onChange(async (value) => {
+          await settings.set("tencentAsrAppId", value.trim());
+        })
+      );
+      new import_obsidian2.Setting(speechCard).setName("腾讯云 SecretID").setDesc("用于生成实时转写 WebSocket 鉴权签名。").addText(
+        (text) => text.setPlaceholder("AKID...").setValue(settings.get("tencentAsrSecretId") || "").onChange(async (value) => {
+          await settings.set("tencentAsrSecretId", value.trim());
+        })
+      );
+      new import_obsidian2.Setting(speechCard).setName("腾讯云 SecretKey").setDesc("保存在本地 Obsidian 插件配置中，请勿分享配置文件。").addText(
+        (text) => {
+          text.inputEl.type = "password";
+          text.setPlaceholder("SecretKey").setValue(settings.get("tencentAsrSecretKey") || "").onChange(async (value) => {
+            await settings.set("tencentAsrSecretKey", value.trim());
           });
-          this.display();
-          new import_obsidian2.Notice("本地语音环境已就绪");
-        } catch (error) {
-          this.display();
-          new import_obsidian2.Notice(`语音环境准备失败：${error instanceof Error ? error.message : "未知错误"}`);
         }
-      })
-    ).addButton(
-      (btn) => btn.setButtonText("重新检测").onClick(async () => {
-        await refreshVoiceSetupState(settings);
-        this.display();
-      })
-    ).addButton(
-      (btn) => btn.setButtonText("复制命令").onClick(async () => {
-        await copyTextToClipboard(getManualVoiceSetupCommand());
-        new import_obsidian2.Notice("已复制手动安装命令");
-      })
-    );
-    new import_obsidian2.Setting(speechCard).setName("Whisper CLI 路径").setDesc("whisper-cli 可执行文件的路径").addText(
-      (text) => text.setPlaceholder("/opt/homebrew/bin/whisper-cli").setValue(settings.get("whisperCliPath")).onChange(async (value) => {
-        await settings.set("whisperCliPath", value);
-        await settings.update({ voiceSetupCompleted: false, onboardingCompleted: false, voiceSetupStatus: "pending" });
-      })
-    );
-    new import_obsidian2.Setting(speechCard).setName("FFmpeg 路径").setDesc("ffmpeg 可执行文件的路径，留空时自动扫描常见路径。").addText(
-      (text) => text.setPlaceholder("/opt/homebrew/bin/ffmpeg").setValue(settings.get("ffmpegPath")).onChange(async (value) => {
-        await settings.set("ffmpegPath", value.trim());
-        await settings.update({ voiceSetupCompleted: false, onboardingCompleted: false, voiceSetupStatus: "pending" });
-      })
-    );
-    const modelPresetsDiv = speechCard.createDiv("whisper-model-presets");
-    new import_obsidian2.Setting(modelPresetsDiv).setName("默认高精度模型").setDesc(`插件固定默认使用 ${DEFAULT_WHISPER_MODEL_KEY}，中文准确率优先。`).addButton(
-      (btn) => btn.setButtonText("使用默认模型").onClick(async () => {
-        await setWhisperModelIfExists(settings, DEFAULT_WHISPER_MODEL_PATH);
-        await refreshVoiceSetupState(settings);
-        this.display();
-      })
-    );
-    new import_obsidian2.Setting(modelPresetsDiv).setName("重新下载默认模型").setDesc("缺少模型时可从 whisper.cpp 模型仓库下载。默认模型体积约 1.5GB。").addButton(
-      (btn) => btn.setButtonText("下载 large-v3-turbo").onClick(async () => {
-        const modelPath = await downloadWhisperModel(DEFAULT_WHISPER_MODEL_KEY);
-        await settings.set("whisperModelPath", modelPath);
-        await refreshVoiceSetupState(settings);
-        new import_obsidian2.Notice(`${DEFAULT_WHISPER_MODEL_KEY} 模型下载完成`);
-        this.display();
-      })
-    );
-    new import_obsidian2.Setting(speechCard).setName("高级：自定义模型路径").setDesc("通常无需修改。仅当你要使用其他本地 .bin 模型时填写。").addText(
-      (text) => text.setPlaceholder(DEFAULT_WHISPER_MODEL_PATH).setValue(currentModelPath).onChange(async (value) => {
-        await settings.set("whisperModelPath", value.trim() || DEFAULT_WHISPER_MODEL_PATH);
-        await settings.update({ voiceSetupCompleted: false, onboardingCompleted: false, voiceSetupStatus: "pending" });
-      })
-    );
-    new import_obsidian2.Setting(speechCard).setName("分段转写时长").setDesc("单段越长，中文上下文越完整，但实时性越低。建议 10-15 秒").addSlider(
-      (slider) => slider.setLimits(4, 20, 1).setValue(settings.get("transcriptionSegmentSeconds") || 12).setDynamicTooltip().onChange(async (value) => {
-        await settings.set("transcriptionSegmentSeconds", value);
-      })
-    );
-    new import_obsidian2.Setting(speechCard).setName("专业词提示词").setDesc("会传给 whisper-cli --prompt，用于提高中文业务词识别率").addTextArea(
-      (text) => text.setPlaceholder(DEFAULT_WHISPER_PROMPT).setValue(settings.get("whisperPrompt") || DEFAULT_WHISPER_PROMPT).onChange(async (value) => {
-        await settings.set("whisperPrompt", value);
-      })
-    );
-    new import_obsidian2.Setting(speechCard).setName("识别语言").setDesc("语音识别的目标语言").addDropdown(
-      (dropdown) => dropdown.addOption("zh", "中文").addOption("en", "英文").addOption("ja", "日文").setValue(settings.get("language")).onChange(async (value) => {
-        await settings.set("language", value);
-      })
-    );
+      );
+      const tencentEngine = ["16k_zh", "16k_zh_en"].includes(settings.get("tencentAsrEngineModelType")) ? settings.get("tencentAsrEngineModelType") : TENCENT_ASR_DEFAULT_ENGINE;
+      new import_obsidian2.Setting(speechCard).setName("引擎模型").setDesc("述职汇报现场仅保留中文通用和普方英大模型；大模型引擎会按腾讯云大模型版计费。").addDropdown(
+        (dropdown) => dropdown.addOption("16k_zh", "16k_zh 中文通用").addOption("16k_zh_en", "16k_zh_en 普方英大模型").setValue(tencentEngine).onChange(async (value) => {
+          await settings.set("tencentAsrEngineModelType", value);
+        })
+      );
+      new import_obsidian2.Setting(speechCard).setName("开启 VAD").setDesc("开启后由腾讯云进行人声检测和断句，长时间连续说话更稳。").addToggle(
+        (toggle) => toggle.setValue(settings.get("tencentAsrNeedVad") !== false).onChange(async (value) => {
+          await settings.set("tencentAsrNeedVad", value);
+        })
+      );
+      new import_obsidian2.Setting(speechCard).setName("语气词过滤").setDesc("0 不过滤，1 部分过滤，2 严格过滤。").addDropdown(
+        (dropdown) => dropdown.addOption("0", "不过滤").addOption("1", "部分过滤").addOption("2", "严格过滤").setValue(String(settings.get("tencentAsrFilterModal") || 0)).onChange(async (value) => {
+          await settings.set("tencentAsrFilterModal", Number(value));
+        })
+      );
+      new import_obsidian2.Setting(speechCard).setName("句末句号").setDesc("是否过滤句末句号。").addDropdown(
+        (dropdown) => dropdown.addOption("0", "保留").addOption("1", "过滤").setValue(String(settings.get("tencentAsrFilterPunc") || 0)).onChange(async (value) => {
+          await settings.set("tencentAsrFilterPunc", Number(value));
+        })
+      );
+      new import_obsidian2.Setting(speechCard).setName("数字转换").setDesc("中文普通话引擎支持智能转换为阿拉伯数字。").addDropdown(
+        (dropdown) => dropdown.addOption("0", "不转换").addOption("1", "智能转换").addOption("3", "数学相关转换").setValue(String(settings.get("tencentAsrConvertNumMode") || 1)).onChange(async (value) => {
+          await settings.set("tencentAsrConvertNumMode", Number(value));
+        })
+      );
+      new import_obsidian2.Setting(speechCard).setName("临时热词表").setDesc("腾讯云 hotword_list 格式：热词|权重，多个用英文逗号分隔，例如：述职|10,OKR|11。").addTextArea(
+        (text) => text.setPlaceholder("述职|10,OKR|11,在管净增|10").setValue(settings.get("tencentAsrHotwordList") || "").onChange(async (value) => {
+          await settings.set("tencentAsrHotwordList", value.trim());
+        })
+      );
+    }
+    if (speechProvider !== SPEECH_RECOGNITION_PROVIDER_TENCENT_REALTIME) {
+      new import_obsidian2.Setting(speechCard).setName("分段转写时长").setDesc("单段越长，中文上下文越完整，但实时性越低。建议 10-15 秒").addSlider(
+        (slider) => slider.setLimits(4, 20, 1).setValue(settings.get("transcriptionSegmentSeconds") || 12).setDynamicTooltip().onChange(async (value) => {
+          await settings.set("transcriptionSegmentSeconds", value);
+        })
+      );
+      new import_obsidian2.Setting(speechCard).setName("识别语言").setDesc("语音识别的目标语言").addDropdown(
+        (dropdown) => dropdown.addOption("zh", "中文").addOption("en", "英文").addOption("ja", "日文").setValue(settings.get("language")).onChange(async (value) => {
+          await settings.set("language", value);
+        })
+      );
+    }
   }
   renderEvaluationSettings(container, settings) {
     const model = normalizeEvaluationModel(settings.get("evaluationModel"));
@@ -4356,6 +4523,13 @@ var ReviewPanelView = class extends import_obsidian3.ItemView {
     this.segmentTimer = null;
     this.currentSegmentChunks = [];
     this.isStoppingRecording = false;
+    this.tencentAsrSocket = null;
+    this.tencentAsrProcessor = null;
+    this.tencentAsrSource = null;
+    this.tencentAsrPcmBuffer = [];
+    this.tencentAsrCommittedIndexes = /* @__PURE__ */ new Set();
+    this.tencentAsrFinalPromise = null;
+    this.tencentAsrFinalResolver = null;
     this.missingWhisperModelNoticeShown = false;
     this.voiceSetupBusy = false;
     this.voiceSetupAutoStarted = false;
@@ -4478,6 +4652,11 @@ var ReviewPanelView = class extends import_obsidian3.ItemView {
       this.renderApiKeySetup(container);
       return;
     }
+    const speechProvider = normalizeSpeechRecognitionProvider(settings.get("whisperApiType"));
+    if (speechProvider !== SPEECH_RECOGNITION_PROVIDER_LOCAL) {
+      this.renderCloudVoiceSetup(container, speechProvider);
+      return;
+    }
     this.renderVoiceSetup(container);
   }
   renderApiKeySetup(container) {
@@ -4511,12 +4690,30 @@ var ReviewPanelView = class extends import_obsidian3.ItemView {
           new import_obsidian3.Notice("Moma API Key 验证通过，AI 已就绪");
           this.voiceSetupAutoStarted = false;
           this.render();
-          await this.runVoiceSetup();
+          if (normalizeSpeechRecognitionProvider(this.plugin.getSettingsManager().get("whisperApiType")) === SPEECH_RECOGNITION_PROVIDER_LOCAL) {
+            await this.runVoiceSetup();
+          }
         });
         const manage = actions.createEl("button", { cls: "review-secondary-btn", text: "\u7533\u8BF7/\u7BA1\u7406 Key" });
         manage.addEventListener("click", () => openMomaManageKeys());
         const settings = actions.createEl("button", { cls: "review-ghost-btn", text: "\u6253\u5F00\u8BBE\u7F6E" });
         settings.addEventListener("click", () => {
+          this.app.setting.open();
+          this.app.setting.openTabById("review-assistant");
+        });
+      });
+    });
+  }
+  renderCloudVoiceSetup(container, speechProvider) {
+    const title = speechProvider === SPEECH_RECOGNITION_PROVIDER_TENCENT_REALTIME ? "\u521D\u59CB\u5316\uFF1A\u914D\u7F6E\u817E\u8BAF\u4E91\u5B9E\u65F6\u8BED\u97F3\u8F6C\u5199" : "\u521D\u59CB\u5316\uFF1A\u914D\u7F6E HTTP \u8BED\u97F3\u8F6C\u5199\u63A5\u53E3";
+    const desc = speechProvider === SPEECH_RECOGNITION_PROVIDER_TENCENT_REALTIME ? "\u8BF7\u5728\u63D2\u4EF6\u8BBE\u7F6E\u4E2D\u586B\u5199\u817E\u8BAF\u4E91 AppID\u3001SecretID \u548C SecretKey\u3002\u5B8C\u6210\u540E\u5373\u53EF\u4F7F\u7528 WebSocket \u5B9E\u65F6\u8F6C\u5199\u3002" : "\u8BF7\u5728\u63D2\u4EF6\u8BBE\u7F6E\u4E2D\u586B\u5199 HTTP \u8F6C\u5199\u670D\u52A1\u5730\u5740\u3002";
+    container.createDiv({ cls: "review-empty review-onboarding" }, (empty) => {
+      empty.createDiv({ cls: "review-empty-icon", text: "\u{1F399}" });
+      empty.createDiv({ cls: "review-empty-title", text: title });
+      empty.createDiv({ cls: "review-empty-desc", text: desc });
+      empty.createDiv({ cls: "review-empty-actions" }, (actions) => {
+        const settingsBtn = actions.createEl("button", { cls: "review-primary-btn", text: "\u6253\u5F00\u8BBE\u7F6E" });
+        settingsBtn.addEventListener("click", () => {
           this.app.setting.open();
           this.app.setting.openTabById("review-assistant");
         });
@@ -4884,8 +5081,13 @@ var ReviewPanelView = class extends import_obsidian3.ItemView {
     }
   }
   async startRecording() {
-    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia || typeof MediaRecorder === "undefined") {
+    const speechProvider = normalizeSpeechRecognitionProvider(this.plugin.getSettingsManager().get("whisperApiType"));
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
       new import_obsidian3.Notice("\u5F53\u524D\u73AF\u5883\u4E0D\u652F\u6301\u5F55\u97F3\uFF0C\u8BF7\u4F7F\u7528\u6587\u672C\u8F93\u5165");
+      return;
+    }
+    if (speechProvider !== SPEECH_RECOGNITION_PROVIDER_TENCENT_REALTIME && typeof MediaRecorder === "undefined") {
+      new import_obsidian3.Notice("\u5F53\u524D\u73AF\u5883\u4E0D\u652F\u6301\u5206\u6BB5\u5F55\u97F3\uFF0C\u8BF7\u4F7F\u7528\u6587\u672C\u8F93\u5165");
       return;
     }
     try {
@@ -4897,10 +5099,19 @@ var ReviewPanelView = class extends import_obsidian3.ItemView {
       this.setupWaveform(this.recordingStream);
       this.isRecording = true;
       this.statusText = "\u6B63\u5728\u542C\u53D6\u73B0\u573A\u56DE\u7B54\u2026\u8F6C\u5199\u4F1A\u5206\u6BB5\u8FFD\u52A0\u5230\u8F93\u5165\u6846";
+      if (speechProvider === SPEECH_RECOGNITION_PROVIDER_TENCENT_REALTIME) {
+        this.statusText = "\u6B63\u5728\u542C\u53D6\u73B0\u573A\u56DE\u7B54\u2026\u817E\u8BAF\u4E91\u5B9E\u65F6\u8F6C\u5199\u4F1A\u8FFD\u52A0\u5230\u8F93\u5165\u6846";
+      }
       this.render();
       this.startWaveformAnimation();
-      this.startRecordingSegment();
+      if (speechProvider === SPEECH_RECOGNITION_PROVIDER_TENCENT_REALTIME) {
+        await this.startTencentRealtimeTranscription(this.recordingStream);
+        this.updateRecordingLabel("\u5F55\u97F3\u4E2D \xB7 \u817E\u8BAF\u4E91\u5B9E\u65F6\u8F6C\u5199");
+      } else {
+        this.startRecordingSegment();
+      }
     } catch (error) {
+      await this.cleanupFailedRecordingStart();
       new import_obsidian3.Notice(`\u5F55\u97F3\u542F\u52A8\u5931\u8D25\uFF1A${error instanceof Error ? error.message : "\u672A\u77E5\u9519\u8BEF"}`);
     }
   }
@@ -4908,11 +5119,17 @@ var ReviewPanelView = class extends import_obsidian3.ItemView {
     if (!this.isRecording)
       return;
     this.isStoppingRecording = true;
+    const speechProvider = normalizeSpeechRecognitionProvider(this.plugin.getSettingsManager().get("whisperApiType"));
     if (this.segmentTimer) {
       clearTimeout(this.segmentTimer);
       this.segmentTimer = null;
     }
-    await this.stopCurrentSegment();
+    if (speechProvider === SPEECH_RECOGNITION_PROVIDER_TENCENT_REALTIME || this.tencentAsrSocket) {
+      this.updateRecordingLabel("\u6B63\u5728\u7ED3\u675F\u817E\u8BAF\u4E91\u5B9E\u65F6\u8F6C\u5199");
+      await this.stopTencentRealtimeTranscription();
+    } else {
+      await this.stopCurrentSegment();
+    }
     if (this.recordingStream) {
       this.recordingStream.getTracks().forEach((track) => track.stop());
     }
@@ -4921,9 +5138,186 @@ var ReviewPanelView = class extends import_obsidian3.ItemView {
     this.mediaRecorder = null;
     this.recordingStream = null;
     this.updateRecordingLabel("\u6B63\u5728\u5B8C\u6210\u6700\u540E\u4E00\u6BB5\u8F6C\u5199");
-    await this.drainTranscriptionQueue();
+    if (speechProvider !== SPEECH_RECOGNITION_PROVIDER_TENCENT_REALTIME) {
+      await this.drainTranscriptionQueue();
+    }
     this.statusText = `${this.activeItem ? this.activeItem.user.name : ""} \u8FF0\u804C\u4E2D`;
     this.render();
+  }
+  async cleanupFailedRecordingStart() {
+    try {
+      await this.stopTencentRealtimeTranscription();
+    } catch (error) {
+      console.error("\u8FF0\u804C\u52A9\u624B\u6E05\u7406\u817E\u8BAF\u4E91\u8F6C\u5199\u5931\u8D25", error);
+    }
+    if (this.mediaRecorder && this.mediaRecorder.state !== "inactive") {
+      try {
+        this.mediaRecorder.stop();
+      } catch (error) {
+      }
+    }
+    if (this.recordingStream) {
+      this.recordingStream.getTracks().forEach((track) => track.stop());
+    }
+    this.stopWaveformAnimation();
+    this.isRecording = false;
+    this.isStoppingRecording = false;
+    this.mediaRecorder = null;
+    this.recordingStream = null;
+    this.render();
+  }
+  async startTencentRealtimeTranscription(stream) {
+    const settings = this.plugin.getSettingsManager();
+    const url = buildTencentAsrWebSocketUrl(settings);
+    const WebSocketCtor = window.WebSocket;
+    if (!WebSocketCtor) {
+      throw new Error("\u5F53\u524D\u73AF\u5883\u4E0D\u652F\u6301 WebSocket\uFF0C\u65E0\u6CD5\u4F7F\u7528\u817E\u8BAF\u4E91\u5B9E\u65F6\u8F6C\u5199");
+    }
+    this.tencentAsrPcmBuffer = [];
+    this.tencentAsrCommittedIndexes = /* @__PURE__ */ new Set();
+    const socket = new WebSocketCtor(url);
+    socket.binaryType = "arraybuffer";
+    this.tencentAsrSocket = socket;
+    let handshakeResolved = false;
+    let handshakeReject = null;
+    let handshakeResolve = null;
+    const handshakePromise = new Promise((resolve, reject) => {
+      handshakeResolve = resolve;
+      handshakeReject = reject;
+    });
+    this.tencentAsrFinalPromise = new Promise((resolve) => {
+      this.tencentAsrFinalResolver = resolve;
+    });
+    socket.onopen = () => {
+      this.updateRecordingLabel("\u5F55\u97F3\u4E2D \xB7 \u6B63\u5728\u8FDE\u63A5\u817E\u8BAF\u4E91");
+    };
+    socket.onerror = () => {
+      if (!handshakeResolved && handshakeReject) {
+        handshakeReject(new Error("\u817E\u8BAF\u4E91\u5B9E\u65F6\u8F6C\u5199 WebSocket \u8FDE\u63A5\u5931\u8D25"));
+      } else {
+        new import_obsidian3.Notice("\u817E\u8BAF\u4E91\u5B9E\u65F6\u8F6C\u5199\u8FDE\u63A5\u5F02\u5E38");
+      }
+    };
+    socket.onclose = () => {
+      if (this.tencentAsrFinalResolver) {
+        this.tencentAsrFinalResolver();
+      }
+    };
+    socket.onmessage = (event) => {
+      let data = null;
+      try {
+        data = JSON.parse(String(event.data || "{}"));
+      } catch (error) {
+        return;
+      }
+      if (data.code !== void 0 && data.code !== 0) {
+        const message = data.message || "\u672A\u77E5\u9519\u8BEF";
+        if (!handshakeResolved && handshakeReject) {
+          handshakeReject(new Error(`\u817E\u8BAF\u4E91\u5B9E\u65F6\u8F6C\u5199\u9274\u6743\u5931\u8D25\uFF1A${message}`));
+        } else {
+          new import_obsidian3.Notice(`\u817E\u8BAF\u4E91\u5B9E\u65F6\u8F6C\u5199\u5931\u8D25\uFF1A${message}`);
+        }
+        return;
+      }
+      if (!handshakeResolved) {
+        handshakeResolved = true;
+        if (handshakeResolve)
+          handshakeResolve();
+        this.updateRecordingLabel("\u5F55\u97F3\u4E2D \xB7 \u817E\u8BAF\u4E91\u5B9E\u65F6\u8F6C\u5199");
+      }
+      if (data.result && data.result.voice_text_str) {
+        const result = data.result;
+        const text = String(result.voice_text_str || "").trim();
+        if (result.slice_type === 2 && text) {
+          const index = Number(result.index);
+          const key = Number.isFinite(index) ? index : `${result.start_time || 0}:${result.end_time || 0}:${text}`;
+          if (!this.tencentAsrCommittedIndexes.has(key)) {
+            this.tencentAsrCommittedIndexes.add(key);
+            this.appendTranscriptionText(text);
+          }
+        } else if (text) {
+          this.updateRecordingLabel(`\u5F55\u97F3\u4E2D \xB7 ${text.slice(-18)}`);
+        }
+      }
+      if (data.final === 1 && this.tencentAsrFinalResolver) {
+        this.tencentAsrFinalResolver();
+      }
+    };
+    const timeout = new Promise((_, reject) => {
+      setTimeout(() => reject(new Error("\u817E\u8BAF\u4E91\u5B9E\u65F6\u8F6C\u5199\u8FDE\u63A5\u8D85\u65F6")), 1e4);
+    });
+    await Promise.race([handshakePromise, timeout]);
+    this.attachTencentRealtimeAudioProcessor(stream);
+  }
+  attachTencentRealtimeAudioProcessor(stream) {
+    if (!this.audioContext) {
+      const AudioContextCtor = window.AudioContext || window.webkitAudioContext;
+      if (!AudioContextCtor) {
+        throw new Error("\u5F53\u524D\u73AF\u5883\u4E0D\u652F\u6301 AudioContext\uFF0C\u65E0\u6CD5\u4F7F\u7528\u817E\u8BAF\u4E91\u5B9E\u65F6\u8F6C\u5199");
+      }
+      this.audioContext = new AudioContextCtor();
+    }
+    const source = this.audioContext.createMediaStreamSource(stream);
+    const processor = this.audioContext.createScriptProcessor(4096, 1, 1);
+    this.tencentAsrSource = source;
+    this.tencentAsrProcessor = processor;
+    processor.onaudioprocess = (event) => {
+      const socket = this.tencentAsrSocket;
+      const output = event.outputBuffer.getChannelData(0);
+      output.fill(0);
+      if (!socket || socket.readyState !== 1)
+        return;
+      const input = event.inputBuffer.getChannelData(0);
+      const resampled = resampleFloat32To16k(input, this.audioContext.sampleRate);
+      const pcm = float32ToInt16Samples(resampled);
+      for (let i = 0; i < pcm.length; i++) {
+        this.tencentAsrPcmBuffer.push(pcm[i]);
+      }
+      while (this.tencentAsrPcmBuffer.length >= TENCENT_ASR_PACKET_SAMPLE_COUNT) {
+        const packet = new Int16Array(this.tencentAsrPcmBuffer.splice(0, TENCENT_ASR_PACKET_SAMPLE_COUNT));
+        socket.send(packet.buffer);
+      }
+    };
+    source.connect(processor);
+    processor.connect(this.audioContext.destination);
+  }
+  async stopTencentRealtimeTranscription() {
+    const socket = this.tencentAsrSocket;
+    if (this.tencentAsrProcessor) {
+      try {
+        this.tencentAsrProcessor.disconnect();
+      } catch (error) {
+      }
+      this.tencentAsrProcessor.onaudioprocess = null;
+    }
+    if (this.tencentAsrSource) {
+      try {
+        this.tencentAsrSource.disconnect();
+      } catch (error) {
+      }
+    }
+    this.tencentAsrProcessor = null;
+    this.tencentAsrSource = null;
+    if (socket && socket.readyState === 1) {
+      if (this.tencentAsrPcmBuffer.length > 0) {
+        socket.send(new Int16Array(this.tencentAsrPcmBuffer).buffer);
+        this.tencentAsrPcmBuffer = [];
+      }
+      socket.send(JSON.stringify({ type: "end" }));
+      if (this.tencentAsrFinalPromise) {
+        await Promise.race([
+          this.tencentAsrFinalPromise,
+          new Promise((resolve) => setTimeout(resolve, 5e3))
+        ]);
+      }
+      socket.close();
+    } else if (socket && socket.readyState === 0) {
+      socket.close();
+    }
+    this.tencentAsrSocket = null;
+    this.tencentAsrPcmBuffer = [];
+    this.tencentAsrFinalPromise = null;
+    this.tencentAsrFinalResolver = null;
   }
   startRecordingSegment() {
     if (!this.isRecording || this.isStoppingRecording || !this.recordingStream)
@@ -5081,11 +5475,15 @@ var ReviewPanelView = class extends import_obsidian3.ItemView {
   }
   async transcribeAudio(blob) {
     const settings = this.plugin.getSettingsManager();
+    const speechProvider = normalizeSpeechRecognitionProvider(settings.get("whisperApiType"));
+    if (speechProvider === SPEECH_RECOGNITION_PROVIDER_TENCENT_REALTIME) {
+      throw new Error("\u817E\u8BAF\u4E91\u5B9E\u65F6\u8F6C\u5199\u4E0D\u4F7F\u7528\u5206\u6BB5\u8F6C\u5199\u63A5\u53E3");
+    }
     const cliPath = settings.get("whisperCliPath");
     const modelPath = settings.get("whisperModelPath");
     let cliError = null;
     let lastError = null;
-    if (cliPath && modelPath) {
+    if (speechProvider === SPEECH_RECOGNITION_PROVIDER_LOCAL && cliPath && modelPath) {
       try {
         return await this.transcribeWithWhisperCli(blob);
       } catch (error) {
