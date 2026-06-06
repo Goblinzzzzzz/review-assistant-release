@@ -97,6 +97,15 @@ var WHISPER_MODEL_PRESETS = [
   { key: "medium", fileName: "ggml-medium.bin" },
   { key: "large-v3-turbo", fileName: "ggml-large-v3-turbo.bin" }
 ];
+var DEFAULT_WHISPER_MODEL_KEY = "large-v3-turbo";
+var DEFAULT_WHISPER_MODEL_FILE = "ggml-large-v3-turbo.bin";
+var DEFAULT_WHISPER_MODEL_PATH = `${home}/.whisper-models/${DEFAULT_WHISPER_MODEL_FILE}`;
+var BUNDLED_WHISPER_MODEL_PATHS = WHISPER_MODEL_PRESETS.map((preset) => `${home}/.whisper-models/${preset.fileName}`);
+function isBundledWhisperModelPath(modelPath) {
+  if (!modelPath)
+    return true;
+  return BUNDLED_WHISPER_MODEL_PATHS.includes(modelPath);
+}
 var DEFAULT_SETTINGS = {
   // AI配置
   claudeApiKey: "",
@@ -107,7 +116,7 @@ var DEFAULT_SETTINGS = {
   whisperApiType: "local",
   localWhisperUrl: "http://localhost:8080",
   whisperCliPath: "/opt/homebrew/bin/whisper-cli",
-  whisperModelPath: `${home}/.whisper-models/ggml-small.bin`,
+  whisperModelPath: DEFAULT_WHISPER_MODEL_PATH,
   transcriptionSegmentSeconds: 12,
   whisperPrompt: DEFAULT_WHISPER_PROMPT,
   users: defaultUsers,
@@ -119,7 +128,11 @@ var DEFAULT_SETTINGS = {
 };
 var SettingsManager = class {
   constructor(initialSettings, saveCallback) {
+    initialSettings = initialSettings || {};
     this.settings = { ...DEFAULT_SETTINGS, ...initialSettings };
+    if (!initialSettings.whisperModelPath || isBundledWhisperModelPath(initialSettings.whisperModelPath)) {
+      this.settings.whisperModelPath = DEFAULT_WHISPER_MODEL_PATH;
+    }
     this.saveCallback = saveCallback;
   }
   get(key) {
@@ -3127,10 +3140,10 @@ var import_obsidian2 = require("obsidian");
 var import_child_process = require("child_process");
 var DEFAULT_SPEECH_CONFIG = {
   whisperPath: "/opt/homebrew/bin/whisper-cli",
-  modelPath: `${process.env.HOME}/.whisper-models/ggml-small.bin`,
+  modelPath: DEFAULT_WHISPER_MODEL_PATH,
   language: "zh"
 };
-async function detectWhisperInstallation() {
+async function detectWhisperInstallation(configuredModelPath) {
   const home2 = process.env.HOME || "";
   const possiblePaths = [
     "/opt/homebrew/bin",
@@ -3154,7 +3167,7 @@ async function detectWhisperInstallation() {
     } catch (e) {
     }
   }
-  const modelPath = `${home2}/.whisper-models/ggml-small.bin`;
+  const modelPath = configuredModelPath || `${home2}/.whisper-models/${DEFAULT_WHISPER_MODEL_FILE}`;
   let modelExists = false;
   try {
     const { statSync } = require("fs");
@@ -3248,14 +3261,12 @@ async function downloadWhisperModel(modelKey) {
   return targetPath;
 }
 async function downloadAllWhisperModels(settings) {
-  let lastPath = "";
   for (const preset of WHISPER_MODEL_PRESETS) {
     new import_obsidian2.Notice(`\u5F00\u59CB\u4E0B\u8F7D Whisper \u6A21\u578B\uFF1A${preset.key}`);
-    lastPath = await downloadWhisperModel(preset.key);
+    await downloadWhisperModel(preset.key);
     new import_obsidian2.Notice(`Whisper \u6A21\u578B\u5DF2\u5C31\u7EEA\uFF1A${preset.key}`);
   }
-  if (lastPath)
-    await settings.set("whisperModelPath", lastPath);
+  await settings.set("whisperModelPath", DEFAULT_WHISPER_MODEL_PATH);
 }
 
 // src/views/SettingsView.ts
@@ -3386,60 +3397,32 @@ var ReviewAssistantSettingTab = class extends import_obsidian2.PluginSettingTab 
       })
     );
 
-    const speechCard = this.createSettingsCard(container, "语音识别配置", "配置 whisper.cpp、模型文件、分段转写和专业词提示。");
-    const whisperStatus = await detectWhisperInstallation();
+    const speechCard = this.createSettingsCard(container, "语音识别配置", "默认使用 large-v3-turbo 高精度中文识别模型，并保留本地路径和专业词提示。");
+    const currentModelPath = settings.get("whisperModelPath") || DEFAULT_WHISPER_MODEL_PATH;
+    const whisperStatus = await detectWhisperInstallation(currentModelPath);
     const statusDiv = speechCard.createDiv("whisper-status");
     if (whisperStatus.installed) {
-      statusDiv.createEl("p", { text: "✅ whisper.cpp 已安装", cls: "setting-status-success" });
+      statusDiv.createEl("p", { text: `✅ whisper.cpp 已安装，当前模型：${currentModelPath}`, cls: "setting-status-success" });
     } else {
-      statusDiv.createEl("p", { text: "⚠️ whisper.cpp 未安装或模型未下载", cls: "setting-status-warning" });
+      statusDiv.createEl("p", { text: `⚠️ whisper.cpp 未安装，或默认模型尚未下载：${DEFAULT_WHISPER_MODEL_PATH}`, cls: "setting-status-warning" });
     }
     new import_obsidian2.Setting(speechCard).setName("Whisper CLI 路径").setDesc("whisper-cli 可执行文件的路径").addText(
       (text) => text.setPlaceholder("/opt/homebrew/bin/whisper-cli").setValue(settings.get("whisperCliPath")).onChange(async (value) => {
         await settings.set("whisperCliPath", value);
       })
     );
-    new import_obsidian2.Setting(speechCard).setName("Whisper 模型路径").setDesc("语音识别模型文件路径（.bin）").addText(
-      (text) => text.setPlaceholder("~/.whisper-models/ggml-small.bin").setValue(settings.get("whisperModelPath")).onChange(async (value) => {
-        await settings.set("whisperModelPath", value);
-      })
-    );
     const modelPresetsDiv = speechCard.createDiv("whisper-model-presets");
-    new import_obsidian2.Setting(modelPresetsDiv).setName("模型快捷切换").setDesc("medium 和 large-v3-turbo 准确率更高，需先将对应 .bin 放到 ~/.whisper-models").addButton(
-      (btn) => btn.setButtonText("small").onClick(async () => {
-        await setWhisperModelIfExists(settings, `${home}/.whisper-models/ggml-small.bin`);
-        this.display();
-      })
-    ).addButton(
-      (btn) => btn.setButtonText("medium").onClick(async () => {
-        await setWhisperModelIfExists(settings, `${home}/.whisper-models/ggml-medium.bin`);
-        this.display();
-      })
-    ).addButton(
-      (btn) => btn.setButtonText("large-v3-turbo").onClick(async () => {
-        await setWhisperModelIfExists(settings, `${home}/.whisper-models/ggml-large-v3-turbo.bin`);
+    new import_obsidian2.Setting(modelPresetsDiv).setName("默认高精度模型").setDesc(`插件默认使用 ${DEFAULT_WHISPER_MODEL_KEY}，中文准确率优先。`).addButton(
+      (btn) => btn.setButtonText("使用默认模型").onClick(async () => {
+        await setWhisperModelIfExists(settings, DEFAULT_WHISPER_MODEL_PATH);
         this.display();
       })
     );
-    new import_obsidian2.Setting(modelPresetsDiv).setName("下载模型").setDesc("缺少模型时可从 whisper.cpp 模型仓库下载。全部下载体积较大").addButton(
-      (btn) => btn.setButtonText("下载 small").onClick(async () => {
-        const modelPath = await downloadWhisperModel("small");
+    new import_obsidian2.Setting(modelPresetsDiv).setName("下载语音模型").setDesc("缺少模型时可从 whisper.cpp 模型仓库下载。默认模型体积约 1.5GB。").addButton(
+      (btn) => btn.setButtonText("下载默认模型").onClick(async () => {
+        const modelPath = await downloadWhisperModel(DEFAULT_WHISPER_MODEL_KEY);
         await settings.set("whisperModelPath", modelPath);
-        new import_obsidian2.Notice("small 模型下载完成");
-        this.display();
-      })
-    ).addButton(
-      (btn) => btn.setButtonText("下载 medium").onClick(async () => {
-        const modelPath = await downloadWhisperModel("medium");
-        await settings.set("whisperModelPath", modelPath);
-        new import_obsidian2.Notice("medium 模型下载完成");
-        this.display();
-      })
-    ).addButton(
-      (btn) => btn.setButtonText("下载 turbo").onClick(async () => {
-        const modelPath = await downloadWhisperModel("large-v3-turbo");
-        await settings.set("whisperModelPath", modelPath);
-        new import_obsidian2.Notice("large-v3-turbo 模型下载完成");
+        new import_obsidian2.Notice(`${DEFAULT_WHISPER_MODEL_KEY} 模型下载完成`);
         this.display();
       })
     ).addButton(
@@ -3447,6 +3430,11 @@ var ReviewAssistantSettingTab = class extends import_obsidian2.PluginSettingTab 
         await downloadAllWhisperModels(settings);
         new import_obsidian2.Notice("Whisper 模型全部下载完成");
         this.display();
+      })
+    );
+    new import_obsidian2.Setting(speechCard).setName("高级：自定义模型路径").setDesc("通常无需修改。仅当你要使用其他本地 .bin 模型时填写。").addText(
+      (text) => text.setPlaceholder(DEFAULT_WHISPER_MODEL_PATH).setValue(currentModelPath).onChange(async (value) => {
+        await settings.set("whisperModelPath", value.trim() || DEFAULT_WHISPER_MODEL_PATH);
       })
     );
     new import_obsidian2.Setting(speechCard).setName("分段转写时长").setDesc("单段越长，中文上下文越完整，但实时性越低。建议 10-15 秒").addSlider(
