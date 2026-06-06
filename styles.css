@@ -200,16 +200,19 @@
 }
 
 .review-logo-dot {
-  width: 30px;
-  height: 30px;
-  border-radius: 8px;
+  width: 32px;
+  height: 32px;
   display: flex;
   align-items: center;
   justify-content: center;
-  background: var(--review-soft);
-  color: var(--review-brand);
-  font-weight: 700;
   flex-shrink: 0;
+}
+
+.review-logo-dot svg {
+  width: 30px;
+  height: 30px;
+  display: block;
+  filter: drop-shadow(0 4px 8px rgba(37, 99, 235, 0.18));
 }
 
 .review-title-text {
@@ -443,6 +446,19 @@
 .review-empty-icon {
   font-size: 32px;
   margin-bottom: 10px;
+}
+
+.review-empty-icon-logo {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.review-empty-icon-logo svg {
+  width: 42px;
+  height: 42px;
+  display: block;
+  filter: drop-shadow(0 6px 12px rgba(37, 99, 235, 0.16));
 }
 
 .review-empty-title,
