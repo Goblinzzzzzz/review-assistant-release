@@ -1,0 +1,7 @@
+{
+  "version": "1.0.1",
+  "notes": "增加 Moma API Key 初始化、评价报告雷达图、AI 总结、版权信息和在线升级能力。",
+  "mainJsUrl": "https://raw.githubusercontent.com/Goblinzzzzzz/review-assistant-release/main/main.js",
+  "stylesCssUrl": "https://raw.githubusercontent.com/Goblinzzzzzz/review-assistant-release/main/styles.css",
+  "manifestUrl": "https://raw.githubusercontent.com/Goblinzzzzzz/review-assistant-release/main/manifest.json"
+}
