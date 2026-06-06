@@ -332,6 +332,15 @@
 
 .review-material-main {
   min-width: 0;
+  flex: 1;
+}
+
+.review-material-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 4px;
+  flex-shrink: 0;
 }
 
 .review-material-name {
