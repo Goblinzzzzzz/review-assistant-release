@@ -214,6 +214,39 @@ function openMomaManageKeys() {
     window.open(MOMA_MANAGE_KEYS_URL);
   }
 }
+function compareVersions(current, next) {
+  const currentParts = String(current || "0").split(".").map((part) => parseInt(part, 10) || 0);
+  const nextParts = String(next || "0").split(".").map((part) => parseInt(part, 10) || 0);
+  const length = Math.max(currentParts.length, nextParts.length);
+  for (let i = 0; i < length; i++) {
+    const diff = (nextParts[i] || 0) - (currentParts[i] || 0);
+    if (diff !== 0)
+      return diff;
+  }
+  return 0;
+}
+async function fetchRemoteText(url) {
+  const fetchImpl = typeof globalThis !== "undefined" ? globalThis.fetch : void 0;
+  if (!fetchImpl)
+    throw new Error("\u5F53\u524D\u73AF\u5883\u4E0D\u652F\u6301\u7F51\u7EDC\u4E0B\u8F7D");
+  const response = await fetchImpl(url, { cache: "no-store" });
+  if (!response.ok)
+    throw new Error(`\u4E0B\u8F7D\u5931\u8D25\uFF1AHTTP ${response.status}`);
+  return await response.text();
+}
+function normalizeUpdateManifest(raw) {
+  if (!raw || typeof raw !== "object")
+    throw new Error("\u5347\u7EA7\u6E05\u5355\u683C\u5F0F\u9519\u8BEF");
+  if (!raw.version)
+    throw new Error("\u5347\u7EA7\u6E05\u5355\u7F3A\u5C11 version");
+  return {
+    version: String(raw.version),
+    notes: raw.notes ? String(raw.notes) : "",
+    mainJsUrl: raw.mainJsUrl ? String(raw.mainJsUrl) : "",
+    stylesCssUrl: raw.stylesCssUrl ? String(raw.stylesCssUrl) : "",
+    manifestUrl: raw.manifestUrl ? String(raw.manifestUrl) : ""
+  };
+}
 
 // src/core/SettingsManager.ts
 var home = process.env.HOME || "";
@@ -231,6 +264,7 @@ var MOMA_API_BASE_URL = "https://next.ke.com/ob/api";
 var MOMA_MANAGE_KEYS_URL = "https://moma.ke.com/manage-keys";
 var MOMA_DEFAULT_MODEL = "claude-4.6-sonnet";
 var ENABLE_LOCAL_VOICE_PLAYBACK = false;
+var REVIEW_ASSISTANT_COPYRIGHT = "\xA9\uFE0F\u60E0\u5C45\u5E73\u53F0\u4EBA\u529B\u884C\u653F\u4E2D\u5FC3-\u4F51\u9E9F";
 function isBundledWhisperModelPath(modelPath) {
   if (!modelPath)
     return true;
@@ -257,7 +291,8 @@ var DEFAULT_SETTINGS = {
   maxFollowUpRounds: 5,
   questionStyle: "sharp",
   autoTranscribe: true,
-  language: "zh"
+  language: "zh",
+  updateManifestUrl: ""
 };
 var SettingsManager = class {
   constructor(initialSettings, saveCallback) {
@@ -3718,8 +3753,23 @@ var ReviewAssistantSettingTab = class extends import_obsidian2.PluginSettingTab 
       })
     );
 
-    const aboutCard = this.createSettingsCard(container, "关于", "插件版本和方法论说明。");
-    new import_obsidian2.Setting(aboutCard).setName("述职助手").setDesc("版本 1.0.0 | 基于《超越指标》方法论");
+    const aboutCard = this.createSettingsCard(container, "关于", "插件版本、版权和在线升级。");
+    new import_obsidian2.Setting(aboutCard).setName("述职助手").setDesc(`版本 ${this.plugin.manifest.version || "1.0.0"} | 基于《超越指标》方法论`);
+    new import_obsidian2.Setting(aboutCard).setName("版权信息").setDesc(REVIEW_ASSISTANT_COPYRIGHT);
+    new import_obsidian2.Setting(aboutCard).setName("在线升级清单 URL").setDesc("升级清单 JSON 需包含 version、mainJsUrl、stylesCssUrl，可选 manifestUrl、notes。").addText(
+      (text) => text.setPlaceholder("https://example.com/review-assistant/update.json").setValue(settings.get("updateManifestUrl") || "").onChange(async (value) => {
+        await settings.set("updateManifestUrl", value.trim());
+      })
+    );
+    new import_obsidian2.Setting(aboutCard).setName("在线升级").setDesc("检查远端版本；安装前会备份当前 main.js、styles.css 和 manifest.json。").addButton(
+      (btn) => btn.setButtonText("检查更新").onClick(async () => {
+        await this.plugin.checkOnlineUpdate();
+      })
+    ).addButton(
+      (btn) => btn.setButtonText("下载并安装").setCta().onClick(async () => {
+        await this.plugin.installOnlineUpdate();
+      })
+    );
   }
   updateAIService() {
     const settings = this.plugin.getSettingsManager();
@@ -3861,6 +3911,7 @@ var ReviewPanelView = class extends import_obsidian3.ItemView {
     this.renderBody(containerEl);
     this.renderInput(containerEl);
     this.renderToolbar(containerEl);
+    this.renderFooter(containerEl);
   }
   renderNotConfigured(container) {
     container.createDiv({ cls: "review-empty" }, (empty) => {
@@ -4465,6 +4516,9 @@ var ReviewPanelView = class extends import_obsidian3.ItemView {
       evaluate.addEventListener("click", () => this.generateEvaluation());
     });
   }
+  renderFooter(container) {
+    container.createDiv({ cls: "review-footer", text: REVIEW_ASSISTANT_COPYRIGHT });
+  }
   openFilePicker() {
     const files = this.app.vault.getMarkdownFiles();
     const modal = new FilePickerModal(this.app, files, async (file) => {
@@ -4681,6 +4735,68 @@ var ReviewAssistantPlugin = class extends import_obsidian4.Plugin {
       this.register(() => styleEl.remove());
     } catch (error) {
       console.error("\u8FF0\u804C\u52A9\u624B\u6837\u5F0F\u52A0\u8F7D\u5931\u8D25", error);
+    }
+  }
+  getPluginDir() {
+    return this.manifest.dir || `.obsidian/plugins/${this.manifest.id}`;
+  }
+  async fetchOnlineUpdateManifest() {
+    const url = this.settingsManager.get("updateManifestUrl");
+    if (!url || !url.trim()) {
+      throw new Error("\u8BF7\u5148\u914D\u7F6E\u5728\u7EBF\u5347\u7EA7\u6E05\u5355 URL");
+    }
+    const text = await fetchRemoteText(url.trim());
+    return normalizeUpdateManifest(JSON.parse(text));
+  }
+  async checkOnlineUpdate(showNotice = true) {
+    try {
+      const manifest = await this.fetchOnlineUpdateManifest();
+      const currentVersion = this.manifest.version || "0.0.0";
+      const hasUpdate = compareVersions(currentVersion, manifest.version) > 0;
+      if (showNotice) {
+        if (hasUpdate) {
+          new import_obsidian4.Notice(`\u53D1\u73B0\u65B0\u7248\u672C\uFF1A${manifest.version}\uFF08\u5F53\u524D ${currentVersion}\uFF09`);
+        } else {
+          new import_obsidian4.Notice(`\u5DF2\u662F\u6700\u65B0\u7248\u672C\uFF1A${currentVersion}`);
+        }
+      }
+      return { hasUpdate, manifest };
+    } catch (error) {
+      new import_obsidian4.Notice(`\u68C0\u67E5\u66F4\u65B0\u5931\u8D25\uFF1A${error instanceof Error ? error.message : "\u672A\u77E5\u9519\u8BEF"}`);
+      return { hasUpdate: false, manifest: null };
+    }
+  }
+  async installOnlineUpdate() {
+    try {
+      const { hasUpdate, manifest } = await this.checkOnlineUpdate(false);
+      if (!manifest)
+        return;
+      if (!hasUpdate) {
+        new import_obsidian4.Notice("\u5DF2\u662F\u6700\u65B0\u7248\u672C\uFF0C\u65E0\u9700\u5347\u7EA7");
+        return;
+      }
+      if (!manifest.mainJsUrl || !manifest.stylesCssUrl) {
+        throw new Error("\u5347\u7EA7\u6E05\u5355\u9700\u8981 mainJsUrl \u548C stylesCssUrl");
+      }
+      const pluginDir = this.getPluginDir();
+      const timestamp = (/* @__PURE__ */ new Date()).toISOString().replace(/[-:T.Z]/g, "").slice(0, 14);
+      const files = [
+        { name: "main.js", url: manifest.mainJsUrl },
+        { name: "styles.css", url: manifest.stylesCssUrl },
+        ...manifest.manifestUrl ? [{ name: "manifest.json", url: manifest.manifestUrl }] : []
+      ];
+      for (const file of files) {
+        const path = `${pluginDir}/${file.name}`;
+        const current = await this.app.vault.adapter.read(path);
+        await this.app.vault.adapter.write(`${path}.bak-${timestamp}`, current);
+      }
+      for (const file of files) {
+        const nextContent = await fetchRemoteText(file.url);
+        await this.app.vault.adapter.write(`${pluginDir}/${file.name}`, nextContent);
+      }
+      new import_obsidian4.Notice(`\u5347\u7EA7\u5B8C\u6210\uFF1A${manifest.version}\u3002\u8BF7\u91CD\u542F Obsidian \u6216\u91CD\u65B0\u542F\u7528\u63D2\u4EF6\u751F\u6548`);
+    } catch (error) {
+      new import_obsidian4.Notice(`\u5728\u7EBF\u5347\u7EA7\u5931\u8D25\uFF1A${error instanceof Error ? error.message : "\u672A\u77E5\u9519\u8BEF"}`);
     }
   }
   /**
