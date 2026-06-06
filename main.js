@@ -88,6 +88,9 @@ function getWeekNumber(date) {
 function generateId() {
   return Date.now().toString(36) + Math.random().toString(36).substr(2);
 }
+function sanitizeFileName(name) {
+  return (name || "\u672A\u547D\u540D").replace(/[\\/:*?"<>|]/g, "_").trim() || "\u672A\u547D\u540D";
+}
 
 // src/core/SettingsManager.ts
 var home = process.env.HOME || "";
@@ -3015,7 +3018,19 @@ ${m.content}
       throw new Error("\u6587\u4EF6\u4E0D\u5B58\u5728");
     }
     const content = await this.app.vault.read(file);
-    const evaluationSection = `
+    const evaluationSection = this.formatEvaluationSection(evaluation);
+    if (content.includes("## \u4E94\u7EF4\u5EA6\u8BC4\u4EF7")) {
+      const updated = content.replace(
+        /## 五维度评价[\s\S]*?(?=\n## [^\n]+\n|$)/,
+        evaluationSection.trim()
+      );
+      await this.app.vault.modify(file, updated);
+    } else {
+      await this.app.vault.modify(file, content + "\n" + evaluationSection);
+    }
+  }
+  formatEvaluationSection(evaluation) {
+    return `
 ## \u4E94\u7EF4\u5EA6\u8BC4\u4EF7
 
 **\u603B\u5206**\uFF1A${evaluation.totalScore} / 100
@@ -3043,15 +3058,44 @@ ${evaluation.highlights.map((h) => `- **${h.strength}**\uFF1A${h.performance}`).
 
 ${evaluation.summary}
 `;
-    if (content.includes("## \u4E94\u7EF4\u5EA6\u8BC4\u4EF7")) {
-      const updated = content.replace(
-        /## 五维度评价[\s\S]*?(?=\n## [^\n]+\n|$)/,
-        evaluationSection.trim()
-      );
-      await this.app.vault.modify(file, updated);
-    } else {
-      await this.app.vault.modify(file, content + "\n" + evaluationSection);
+  }
+  async saveEvaluationReport(material, evaluation, sourceFilePath) {
+    var _a2;
+    const dateObj = new Date(material.date);
+    const week = material.week || getWeekNumber(dateObj);
+    const year = dateObj.getFullYear();
+    const weekNum = ((_a2 = week.match(/第(\d+)周/)) == null ? void 0 : _a2[1]) || "1";
+    const folderPath = `${this.basePath}/\u8FF0\u804C\u62A5\u544A/${year}\u5E74/\u7B2C${weekNum}\u5468`;
+    const fileName = `${sanitizeFileName(material.userName)}_${material.date}_\u8FF0\u804C\u62A5\u544A.md`;
+    const filePath = `${folderPath}/${fileName}`;
+    await this.ensureFolder(folderPath);
+    const reportContent = `---
+id: ${generateId()}
+userName: ${material.userName}
+role: ${material.role}
+date: ${material.date}
+week: ${week}
+source: ${sourceFilePath || ""}
+createdAt: ${(/* @__PURE__ */ new Date()).toISOString()}
+---
+
+# \u8FF0\u804C\u8BC4\u4EF7\u62A5\u544A
+
+## \u57FA\u672C\u4FE1\u606F
+- \u8FF0\u804C\u4EBA\uFF1A${material.userName}
+- \u5C97\u4F4D\uFF1A${material.role}
+- \u8FF0\u804C\u65E5\u671F\uFF1A${material.date}
+- \u5468\u671F\uFF1A${week}
+- \u6750\u6599\u6765\u6E90\uFF1A${sourceFilePath || "\u672A\u8BB0\u5F55"}
+
+${this.formatEvaluationSection(evaluation).trim()}
+`;
+    const existing = this.app.vault.getAbstractFileByPath(filePath);
+    if (existing instanceof import_obsidian.TFile) {
+      await this.app.vault.modify(existing, reportContent);
+      return existing;
     }
+    return await this.app.vault.create(filePath, reportContent);
   }
   /**
    * 获取指定周期的材料列表
@@ -4287,6 +4331,7 @@ var ReviewPanelView = class extends import_obsidian3.ItemView {
       const evaluation = await this.plugin.getAIService().generateEvaluation(this.activeMaterial, this.conversationHistory);
       if (this.activeItem.file) {
         await this.plugin.getDataService().saveEvaluation(this.activeItem.file.path, evaluation);
+        await this.plugin.getDataService().saveEvaluationReport(this.activeMaterial, evaluation, this.activeItem.file.path);
       }
       this.activeItem.status = "done";
       this.activeItem.score = evaluation.totalScore;
@@ -4499,6 +4544,7 @@ var ReviewAssistantPlugin = class extends import_obsidian4.Plugin {
         material.conversation || []
       );
       await this.dataService.saveEvaluation(activeFile.path, evaluation);
+      await this.dataService.saveEvaluationReport(material, evaluation, activeFile.path);
       new import_obsidian4.Notice(`\u8BC4\u4EF7\u5B8C\u6210\uFF1A${evaluation.totalScore}\u5206\uFF0C\u7B49\u7EA7${evaluation.grade}`);
     } catch (error) {
       new import_obsidian4.Notice(`\u751F\u6210\u5931\u8D25\uFF1A${error instanceof Error ? error.message : "\u672A\u77E5\u9519\u8BEF"}`);
