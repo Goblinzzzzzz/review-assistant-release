@@ -3271,15 +3271,16 @@ async function downloadAllWhisperModels(settings) {
 
 // src/views/SettingsView.ts
 var UserEditModal = class extends import_obsidian2.Modal {
-  constructor(app, user, onSave) {
+  constructor(app, user, onSave, title = "\u7F16\u8F91\u8FF0\u804C\u4EBA") {
     super(app);
     this.user = { ...user, defaultMetrics: [...(user.defaultMetrics || [])] };
     this.onSave = onSave;
+    this.title = title;
   }
   onOpen() {
     const { contentEl } = this;
     contentEl.empty();
-    contentEl.createEl("h2", { text: "\u7F16\u8F91\u8FF0\u804C\u4EBA" });
+    contentEl.createEl("h2", { text: this.title });
     new import_obsidian2.Setting(contentEl).setName("\u59D3\u540D").addText(
       (text) => text.setValue(this.user.name).onChange((value) => {
         this.user.name = value.trim();
@@ -3457,14 +3458,46 @@ var ReviewAssistantSettingTab = class extends import_obsidian2.PluginSettingTab 
     const peopleCard = this.createSettingsCard(container, "述职人配置", "维护参与述职的人员、岗位和默认指标。");
     const users = settings.get("users");
     const usersContainer = peopleCard.createDiv("review-users-container");
+    new import_obsidian2.Setting(usersContainer).setName("\u8FF0\u804C\u4EBA\u5458").setDesc("\u652F\u6301\u6309\u57CE\u5E02\u81EA\u884C\u7EF4\u62A4\u8FF0\u804C\u4EBA\u548C\u5C97\u4F4D\u3002").addButton(
+      (btn) => btn.setButtonText("\u65B0\u589E\u8FF0\u804C\u4EBA").setCta().onClick(() => {
+        const newUser = {
+          id: generateId(),
+          name: "",
+          role: "\u8D44\u7BA1\u603B\u76D1",
+          defaultMetrics: []
+        };
+        new UserEditModal(this.app, newUser, async (createdUser) => {
+          const existingUsers = settings.get("users");
+          if (existingUsers.some((item) => item.name === createdUser.name)) {
+            new import_obsidian2.Notice("\u5DF2\u5B58\u5728\u540C\u540D\u8FF0\u804C\u4EBA");
+            return;
+          }
+          await settings.set("users", [...existingUsers, createdUser]);
+          this.display();
+        }, "\u65B0\u589E\u8FF0\u804C\u4EBA").open();
+      })
+    );
     users.forEach((user) => {
       new import_obsidian2.Setting(usersContainer).setName(`${user.name}`).setDesc(`${user.role}`).addButton(
         (btn) => btn.setIcon("pencil").setTooltip("编辑").onClick(() => {
           new UserEditModal(this.app, user, async (updatedUser) => {
+            const existingUsers = settings.get("users");
+            if (existingUsers.some((item) => item.id !== updatedUser.id && item.name === updatedUser.name)) {
+              new import_obsidian2.Notice("\u5DF2\u5B58\u5728\u540C\u540D\u8FF0\u804C\u4EBA");
+              return;
+            }
             const nextUsers = settings.get("users").map((item) => item.id === updatedUser.id ? updatedUser : item);
             await settings.set("users", nextUsers);
             this.display();
           }).open();
+        })
+      ).addButton(
+        (btn) => btn.setIcon("trash").setTooltip("\u5220\u9664").onClick(async () => {
+          if (!confirm(`\u786E\u5B9A\u5220\u9664\u8FF0\u804C\u4EBA\u201C${user.name}\u201D\u5417\uFF1F`)) {
+            return;
+          }
+          await settings.set("users", settings.get("users").filter((item) => item.id !== user.id));
+          this.display();
         })
       );
     });
