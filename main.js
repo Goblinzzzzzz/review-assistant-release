@@ -3749,7 +3749,7 @@ var ReviewPanelView = class extends import_obsidian3.ItemView {
       if (this.conversationHistory.length === 0) {
         this.messagesEl.createDiv({ cls: "review-chat-empty" }, (empty) => {
           empty.createDiv({ cls: "review-chat-empty-title", text: "\u8FD8\u6CA1\u6709\u73B0\u573A\u95EE\u7B54" });
-          empty.createDiv({ cls: "review-chat-empty-desc", text: "\u70B9\u51FB\u201C\u751F\u6210\u63D0\u95EE\u201D\uFF0CAI\u4F1A\u57FA\u4E8E\u8FF0\u804C\u6750\u6599\u63D0\u51FA\u7B2C\u4E00\u4E2A\u95EE\u9898\u3002" });
+          empty.createDiv({ cls: "review-chat-empty-desc", text: "\u70B9\u51FB\u201C\u751F\u6210\u9996\u95EE\u201D\uFF0CAI\u4F1A\u57FA\u4E8E\u8FF0\u804C\u6750\u6599\u63D0\u51FA\u7B2C\u4E00\u4E2A\u95EE\u9898\u3002" });
         });
       } else {
         this.conversationHistory.forEach((message) => this.addMessage(message, false));
@@ -4136,13 +4136,16 @@ var ReviewPanelView = class extends import_obsidian3.ItemView {
   }
   renderToolbar(container) {
     container.createDiv({ cls: "review-toolbar" }, (toolbar) => {
-      const regenerate = toolbar.createEl("button", { cls: "review-ghost-btn", text: "\u6362\u9898" });
+      const regenerate = toolbar.createEl("button", { cls: "review-ghost-btn", text: this.conversationHistory.length ? "\u8DF3\u5230\u65B0\u95EE\u9898" : "\u6362\u4E00\u4E2A\u9996\u95EE" });
+      regenerate.title = "\u8DF3\u8FC7\u5F53\u524D\u8BDD\u9898\uFF0C\u57FA\u4E8E\u6750\u6599\u751F\u6210\u65B0\u95EE\u9898";
       regenerate.disabled = this.isProcessing || !this.activeMaterial;
       regenerate.addEventListener("click", () => this.generateQuestion(true));
-      const ask = toolbar.createEl("button", { cls: "review-primary-btn", text: this.conversationHistory.length ? "\u7EE7\u7EED\u8FFD\u95EE" : "\u751F\u6210\u63D0\u95EE" });
+      const ask = toolbar.createEl("button", { cls: "review-primary-btn", text: this.conversationHistory.length ? "\u7EE7\u7EED\u8FFD\u95EE" : "\u751F\u6210\u9996\u95EE" });
+      ask.title = this.conversationHistory.length ? "\u6839\u636E\u5DF2\u6709\u95EE\u7B54\u7EE7\u7EED\u8FFD\u95EE" : "\u57FA\u4E8E\u8FF0\u804C\u6750\u6599\u751F\u6210\u7B2C\u4E00\u4E2A\u95EE\u9898";
       ask.disabled = this.isProcessing || !this.activeMaterial;
       ask.addEventListener("click", () => this.generateQuestion(false));
-      const submit = toolbar.createEl("button", { cls: "review-secondary-btn", text: "\u63D0\u4EA4\u56DE\u7B54" });
+      const submit = toolbar.createEl("button", { cls: "review-secondary-btn", text: "\u63D0\u4EA4\u5E76\u8FFD\u95EE" });
+      submit.title = "\u4FDD\u5B58\u5F53\u524D\u56DE\u7B54\uFF0C\u5E76\u81EA\u52A8\u751F\u6210\u4E0B\u4E00\u4E2A\u8FFD\u95EE";
       submit.disabled = this.isProcessing || !this.currentAnswer.trim();
       submit.addEventListener("click", () => this.submitAnswer());
       const evaluate = toolbar.createEl("button", { cls: "review-outline-btn", text: "\u8BC4\u4EF7" });
