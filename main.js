@@ -174,6 +174,17 @@ function generateId() {
 function sanitizeFileName(name) {
   return (name || "\u672A\u547D\u540D").replace(/[\\/:*?"<>|]/g, "_").trim() || "\u672A\u547D\u540D";
 }
+function sanitizeAssetFileName(name) {
+  return sanitizeFileName(name).replace(/\s+/g, "_");
+}
+function escapeSvgText(value) {
+  return String(value ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+function clampNumber(value, min, max, fallback = 0) {
+  const numeric = Number(value);
+  const safe = Number.isFinite(numeric) ? numeric : fallback;
+  return Math.max(min, Math.min(max, safe));
+}
 function getEvaluationDimensionItems(evaluation) {
   return [
     { key: "indicatorQuality", label: "\u6307\u6807\u8D28\u91CF", score: evaluation.dimensions.indicatorQuality.score, max: evaluation.dimensions.indicatorQuality.maxScore || 20, comment: evaluation.dimensions.indicatorQuality.comment },
@@ -203,8 +214,19 @@ ${focusItems.length ? focusItems.map((item) => `- ${item}`).join("\n") : "- \u63
 \u603B\u7ED3\uFF1A${evaluation.summary || "\u8BF7\u7ED3\u5408\u8BC4\u4EF7\u62A5\u544A\u7EE7\u7EED\u590D\u76D8\u3002"}`;
 }
 function buildEvaluationRadarSvg(evaluation) {
-  const items = getEvaluationDimensionItems(evaluation);
+  const items = getEvaluationDimensionItems(evaluation).map((item) => {
+    const max = Math.max(1, Number(item.max) || 1);
+    const score = clampNumber(item.score, 0, max, 0);
+    return {
+      ...item,
+      label: escapeSvgText(item.label),
+      score,
+      max
+    };
+  });
   const maxScore = items.reduce((sum, item) => sum + (Number(item.max) || 0), 0) || 100;
+  const totalScore = clampNumber(evaluation.totalScore, 0, maxScore, 0);
+  const grade = escapeSvgText(evaluation.grade || "");
   const size = 520;
   const center = size / 2;
   const radius = 150;
@@ -222,7 +244,7 @@ function buildEvaluationRadarSvg(evaluation) {
     return `${point.x.toFixed(1)},${point.y.toFixed(1)}`;
   }).join(" ");
   const scorePoints = items.map((item, index) => {
-    const point = pointFor(index, Math.max(0, Math.min(1, item.score / item.max)));
+    const point = pointFor(index, clampNumber(item.score / item.max, 0, 1, 0));
     return `${point.x.toFixed(1)},${point.y.toFixed(1)}`;
   }).join(" ");
   const axes = items.map((_, index) => {
@@ -232,7 +254,7 @@ function buildEvaluationRadarSvg(evaluation) {
   const labels = items.map((item, index) => {
     const point = pointFor(index, 1.22);
     const anchor = point.x < center - 20 ? "end" : point.x > center + 20 ? "start" : "middle";
-    const ratio = Math.round(item.score / item.max * 100);
+    const ratio = Math.round(clampNumber(item.score / item.max, 0, 1, 0) * 100);
     return `<text x="${point.x.toFixed(1)}" y="${point.y.toFixed(1)}" text-anchor="${anchor}" dominant-baseline="middle" fill="#2f3437" font-size="14" font-weight="700">${item.label}</text>
 <text x="${point.x.toFixed(1)}" y="${(point.y + 18).toFixed(1)}" text-anchor="${anchor}" dominant-baseline="middle" fill="#d97757" font-size="12" font-weight="700">${item.score}/${item.max} · ${ratio}%</text>`;
   }).join("\n");
@@ -254,14 +276,14 @@ function buildEvaluationRadarSvg(evaluation) {
   </defs>
   <rect x="18" y="18" width="684" height="524" rx="22" fill="url(#radarBg)" stroke="#e5e7eb"/>
   <text x="48" y="58" fill="#1f2937" font-size="22" font-weight="800">五维度能力雷达图</text>
-  <text x="48" y="84" fill="#6b7280" font-size="13">总分 ${evaluation.totalScore}/${maxScore} · 等级 ${evaluation.grade}</text>
+  <text x="48" y="84" fill="#6b7280" font-size="13">总分 ${totalScore}/${maxScore} · 等级 ${grade}</text>
   <g transform="translate(100, 18)" filter="url(#radarShadow)">
     <circle cx="${center}" cy="${center}" r="${radius + 34}" fill="#ffffff" opacity="0.72"/>
     ${rings}
     ${axes}
     <polygon points="${scorePoints}" fill="url(#radarFill)" stroke="#d97757" stroke-width="3" stroke-linejoin="round"/>
     ${items.map((item, index) => {
-    const point = pointFor(index, Math.max(0, Math.min(1, item.score / item.max)));
+    const point = pointFor(index, clampNumber(item.score / item.max, 0, 1, 0));
     return `<circle cx="${point.x.toFixed(1)}" cy="${point.y.toFixed(1)}" r="5.5" fill="#ffffff" stroke="#d97757" stroke-width="3"/>`;
   }).join("\n")}
     <circle cx="${center}" cy="${center}" r="4" fill="#d97757"/>
@@ -415,7 +437,7 @@ function buildTencentAsrWebSocketUrl(settings) {
     expired: now + 3600,
     filter_modal: Number(settings.get("tencentAsrFilterModal") || 0),
     filter_punc: Number(settings.get("tencentAsrFilterPunc") || 0),
-    convert_num_mode: Number(settings.get("tencentAsrConvertNumMode") || 1),
+    convert_num_mode: Number(settings.get("tencentAsrConvertNumMode") ?? 1),
     needvad: settings.get("tencentAsrNeedVad") === false ? 0 : 1,
     nonce: Math.floor(Math.random() * 1e10),
     secretid: secretId,
@@ -3526,6 +3548,18 @@ ${evaluation.summary}
     const fileName = `${sanitizeFileName(material.userName)}_${material.date}_\u8FF0\u804C\u62A5\u544A.md`;
     const filePath = `${folderPath}/${fileName}`;
     await this.ensureFolder(folderPath);
+    const radarFolderPath = `${folderPath}/assets`;
+    await this.ensureFolder(radarFolderPath);
+    const radarFileName = `${sanitizeAssetFileName(material.userName)}_${material.date}_radar.svg`;
+    const radarFilePath = `${radarFolderPath}/${radarFileName}`;
+    const radarSvg = buildEvaluationRadarSvg(evaluation);
+    const existingRadar = this.app.vault.getAbstractFileByPath(radarFilePath);
+    if (existingRadar instanceof import_obsidian.TFile) {
+      await this.app.vault.modify(existingRadar, radarSvg);
+    } else {
+      await this.app.vault.create(radarFilePath, radarSvg);
+    }
+    const radarEmbedPath = `assets/${radarFileName}`;
     const reportContent = `---
 id: ${generateId()}
 userName: ${material.userName}
@@ -3547,7 +3581,7 @@ createdAt: ${(/* @__PURE__ */ new Date()).toISOString()}
 
 ## \u8BC4\u4EF7\u6982\u89C8
 
-${buildEvaluationRadarSvg(evaluation)}
+![\u4E94\u7EF4\u5EA6\u80FD\u529B\u96F7\u8FBE\u56FE](${radarEmbedPath})
 
 ${this.formatEvaluationSection(evaluation).trim()}
 `;
@@ -4290,7 +4324,7 @@ var ReviewAssistantSettingTab = class extends import_obsidian2.PluginSettingTab 
         })
       );
       new import_obsidian2.Setting(speechCard).setName("数字转换").setDesc("中文普通话引擎支持智能转换为阿拉伯数字。").addDropdown(
-        (dropdown) => dropdown.addOption("0", "不转换").addOption("1", "智能转换").addOption("3", "数学相关转换").setValue(String(settings.get("tencentAsrConvertNumMode") || 1)).onChange(async (value) => {
+        (dropdown) => dropdown.addOption("0", "不转换").addOption("1", "智能转换").addOption("3", "数学相关转换").setValue(String(settings.get("tencentAsrConvertNumMode") ?? 1)).onChange(async (value) => {
           await settings.set("tencentAsrConvertNumMode", Number(value));
         })
       );
@@ -4530,6 +4564,7 @@ var ReviewPanelView = class extends import_obsidian3.ItemView {
     this.tencentAsrCommittedIndexes = /* @__PURE__ */ new Set();
     this.tencentAsrFinalPromise = null;
     this.tencentAsrFinalResolver = null;
+    this.tencentAsrRuntimeErrorHandled = false;
     this.missingWhisperModelNoticeShown = false;
     this.voiceSetupBusy = false;
     this.voiceSetupAutoStarted = false;
@@ -5178,6 +5213,7 @@ var ReviewPanelView = class extends import_obsidian3.ItemView {
     const socket = new WebSocketCtor(url);
     socket.binaryType = "arraybuffer";
     this.tencentAsrSocket = socket;
+    this.tencentAsrRuntimeErrorHandled = false;
     let handshakeResolved = false;
     let handshakeReject = null;
     let handshakeResolve = null;
@@ -5195,7 +5231,7 @@ var ReviewPanelView = class extends import_obsidian3.ItemView {
       if (!handshakeResolved && handshakeReject) {
         handshakeReject(new Error("\u817E\u8BAF\u4E91\u5B9E\u65F6\u8F6C\u5199 WebSocket \u8FDE\u63A5\u5931\u8D25"));
       } else {
-        new import_obsidian3.Notice("\u817E\u8BAF\u4E91\u5B9E\u65F6\u8F6C\u5199\u8FDE\u63A5\u5F02\u5E38");
+        this.handleTencentRealtimeRuntimeError("\u8FDE\u63A5\u5F02\u5E38");
       }
     };
     socket.onclose = () => {
@@ -5215,7 +5251,7 @@ var ReviewPanelView = class extends import_obsidian3.ItemView {
         if (!handshakeResolved && handshakeReject) {
           handshakeReject(new Error(`\u817E\u8BAF\u4E91\u5B9E\u65F6\u8F6C\u5199\u9274\u6743\u5931\u8D25\uFF1A${message}`));
         } else {
-          new import_obsidian3.Notice(`\u817E\u8BAF\u4E91\u5B9E\u65F6\u8F6C\u5199\u5931\u8D25\uFF1A${message}`);
+          this.handleTencentRealtimeRuntimeError(message);
         }
         return;
       }
@@ -5281,8 +5317,7 @@ var ReviewPanelView = class extends import_obsidian3.ItemView {
     source.connect(processor);
     processor.connect(this.audioContext.destination);
   }
-  async stopTencentRealtimeTranscription() {
-    const socket = this.tencentAsrSocket;
+  cleanupTencentRealtimeAudioNodes() {
     if (this.tencentAsrProcessor) {
       try {
         this.tencentAsrProcessor.disconnect();
@@ -5298,6 +5333,33 @@ var ReviewPanelView = class extends import_obsidian3.ItemView {
     }
     this.tencentAsrProcessor = null;
     this.tencentAsrSource = null;
+  }
+  handleTencentRealtimeRuntimeError(message) {
+    if (this.tencentAsrRuntimeErrorHandled)
+      return;
+    this.tencentAsrRuntimeErrorHandled = true;
+    new import_obsidian3.Notice(`\u817E\u8BAF\u4E91\u5B9E\u65F6\u8F6C\u5199\u5931\u8D25\uFF1A${message}`);
+    this.cleanupTencentRealtimeAudioNodes();
+    if (this.tencentAsrSocket && this.tencentAsrSocket.readyState === 1) {
+      this.tencentAsrSocket.close();
+    }
+    if (this.recordingStream) {
+      this.recordingStream.getTracks().forEach((track) => track.stop());
+    }
+    this.stopWaveformAnimation();
+    this.isRecording = false;
+    this.isStoppingRecording = false;
+    this.recordingStream = null;
+    this.tencentAsrSocket = null;
+    this.tencentAsrPcmBuffer = [];
+    this.tencentAsrFinalPromise = null;
+    this.tencentAsrFinalResolver = null;
+    this.statusText = `${this.activeItem ? this.activeItem.user.name : ""} \u8FF0\u804C\u4E2D`;
+    this.render();
+  }
+  async stopTencentRealtimeTranscription() {
+    const socket = this.tencentAsrSocket;
+    this.cleanupTencentRealtimeAudioNodes();
     if (socket && socket.readyState === 1) {
       if (this.tencentAsrPcmBuffer.length > 0) {
         socket.send(new Int16Array(this.tencentAsrPcmBuffer).buffer);
