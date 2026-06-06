@@ -1,7 +1,7 @@
 {
   "version": "1.0.8",
   "notes": "修复 Moma 网关返回流式 SSE 时 AI 内容解析失败的问题，确保生成首问、继续追问、评价等 AI 功能可正常返回内容。",
-  "mainJsUrl": "https://raw.githubusercontent.com/Goblinzzzzzz/review-assistant-release/refs/heads/main/main.js",
-  "stylesCssUrl": "https://raw.githubusercontent.com/Goblinzzzzzz/review-assistant-release/refs/heads/main/styles.css",
-  "manifestUrl": "https://raw.githubusercontent.com/Goblinzzzzzz/review-assistant-release/refs/heads/main/manifest.json"
+  "mainJsUrl": "https://raw.githubusercontent.com/Goblinzzzzzz/review-assistant-release/0a1f737b28b4fae84494690ba1a0178ca02e5509/main.js",
+  "stylesCssUrl": "https://raw.githubusercontent.com/Goblinzzzzzz/review-assistant-release/0a1f737b28b4fae84494690ba1a0178ca02e5509/styles.css",
+  "manifestUrl": "https://raw.githubusercontent.com/Goblinzzzzzz/review-assistant-release/0a1f737b28b4fae84494690ba1a0178ca02e5509/manifest.json"
 }
