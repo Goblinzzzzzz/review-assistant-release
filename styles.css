@@ -514,6 +514,71 @@
   word-break: break-word;
 }
 
+.review-onboarding-progress {
+  margin-top: 10px;
+}
+
+.review-onboarding-progress-label {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  color: var(--text-muted);
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.review-onboarding-progress-label span:first-child {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.review-onboarding-progress-label span:last-child {
+  flex-shrink: 0;
+  color: var(--text-faint);
+}
+
+.review-onboarding-progress-track {
+  position: relative;
+  height: 6px;
+  margin-top: 7px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: var(--background-modifier-border);
+}
+
+.review-onboarding-progress-fill {
+  height: 100%;
+  border-radius: inherit;
+  background: var(--interactive-accent);
+  transition: width 0.25s ease;
+}
+
+.review-onboarding-progress.is-indeterminate .review-onboarding-progress-fill {
+  animation: reviewSetupProgressPulse 1.2s ease-in-out infinite;
+}
+
+@keyframes reviewSetupProgressPulse {
+  0%, 100% { opacity: 0.55; }
+  50% { opacity: 1; }
+}
+
+.review-onboarding-log {
+  margin-top: 10px;
+  padding: 8px;
+  max-height: 96px;
+  overflow: hidden;
+  border-radius: 6px;
+  background: var(--background-secondary);
+  color: var(--text-faint);
+  font-family: var(--font-monospace);
+  font-size: 10px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
 .review-onboarding-command {
   display: block;
   margin-top: 10px;

@@ -3565,29 +3565,57 @@ function summarizeCommandError(error) {
   const text = parts.join("\n").split("\n").map((line) => line.trim()).filter(Boolean).slice(-5).join("；");
   return text.slice(0, 320) || "\u672A\u77E5\u9519\u8BEF";
 }
-async function runVoiceSetupCommand(command, timeoutMs = 18e5) {
-  const { promisify } = require("util");
-  const { execFile } = require("child_process");
-  const execFileAsync = promisify(execFile);
-  try {
-    const result = await execFileAsync("/bin/bash", ["-lc", command], {
+function normalizeVoiceSetupEvent(event) {
+  if (typeof event === "string") {
+    return { message: event };
+  }
+  return event || {};
+}
+async function runVoiceSetupCommand(command, timeoutMs = 18e5, onProgress = () => {
+}) {
+  const { spawn } = require("child_process");
+  const outputLines = [];
+  const pushOutput = (text) => {
+    String(text).replace(/\x1B\[[0-9;?]*[A-Za-z]/g, "").split(/\r?\n|\r/).map((line) => line.trim()).filter(Boolean).forEach((line) => {
+      outputLines.push(line);
+      if (outputLines.length > 30)
+        outputLines.shift();
+      onProgress({ detail: line, indeterminate: true });
+    });
+  };
+  await new Promise((resolve, reject) => {
+    const child = spawn("/bin/bash", ["-lc", command], {
       env: {
         ...process.env,
         NONINTERACTIVE: "1",
         PATH: getVoiceInstallPathEnv()
       },
-      timeout: timeoutMs,
-      maxBuffer: 20 * 1024 * 1024
+      stdio: ["ignore", "pipe", "pipe"]
     });
-    if (result.stdout)
-      console.log("\u8FF0\u804C\u52A9\u624B\u8BED\u97F3\u73AF\u5883\u5B89\u88C5\u8F93\u51FA", result.stdout);
-    if (result.stderr)
-      console.log("\u8FF0\u804C\u52A9\u624B\u8BED\u97F3\u73AF\u5883\u5B89\u88C5\u63D0\u793A", result.stderr);
-    return result;
-  } catch (error) {
+    const timer = setTimeout(() => {
+      child.kill("SIGTERM");
+      reject(new Error(`\u547D\u4EE4\u8D85\u65F6\uFF1A${command}`));
+    }, timeoutMs);
+    child.stdout.on("data", pushOutput);
+    child.stderr.on("data", pushOutput);
+    child.on("error", (error) => {
+      clearTimeout(timer);
+      reject(error);
+    });
+    child.on("close", (code) => {
+      clearTimeout(timer);
+      if (code === 0) {
+        resolve();
+        return;
+      }
+      const error = new Error(outputLines.slice(-8).join("\n") || `\u547D\u4EE4\u6267\u884C\u5931\u8D25\uFF1A${command}`);
+      error.stdout = outputLines.join("\n");
+      reject(error);
+    });
+  }).catch((error) => {
     console.error("\u8FF0\u804C\u52A9\u624B\u8BED\u97F3\u73AF\u5883\u5B89\u88C5\u5931\u8D25", error);
     throw new Error(summarizeCommandError(error));
-  }
+  });
 }
 async function fileExists(filePath) {
   if (!filePath)
@@ -3697,49 +3725,53 @@ async function refreshVoiceSetupState(settings) {
 }
 async function prepareVoiceEnvironment(settings, onStatus = () => {
 }) {
-  const report = async (message) => {
+  const report = async (event) => {
+    const progressEvent = normalizeVoiceSetupEvent(event);
     await settings.update({
       voiceSetupStatus: "installing",
       lastVoiceSetupError: "",
       lastVoiceSetupCheckAt: new Date().toISOString()
     });
-    onStatus(message);
+    onStatus(progressEvent);
   };
   try {
-    await report("\u6B63\u5728\u68C0\u6D4B\u672C\u5730\u8BED\u97F3\u73AF\u5883\u2026");
+    await report({ message: "\u6B63\u5728\u68C0\u6D4B\u672C\u5730\u8BED\u97F3\u73AF\u5883\u2026", progress: 0.08 });
     if (process.platform !== "darwin") {
       throw new Error("\u5F53\u524D\u81EA\u52A8\u5B89\u88C5\u4EC5\u652F\u6301 macOS \u684C\u9762\u7AEF");
     }
     let detection = await detectVoiceEnvironment(settings.getAll());
     if (!detection.homebrewReady) {
-      await report("\u6B63\u5728\u5B89\u88C5 Homebrew\u2026");
-      await runVoiceSetupCommand(HOMEBREW_INSTALL_COMMAND, 18e5);
+      await report({ message: "\u6B63\u5728\u5B89\u88C5 Homebrew\u2026", progress: 0.16, indeterminate: true });
+      await runVoiceSetupCommand(HOMEBREW_INSTALL_COMMAND, 18e5, (event) => onStatus({ message: "\u6B63\u5728\u5B89\u88C5 Homebrew\u2026", progress: 0.28, ...event }));
       detection = await detectVoiceEnvironment(settings.getAll());
       if (!detection.homebrewReady) {
         throw new Error("Homebrew \u5B89\u88C5\u540E\u4ECD\u672A\u68C0\u6D4B\u5230\uFF0C\u8BF7\u624B\u52A8\u6267\u884C\u5B89\u88C5\u547D\u4EE4");
       }
     }
     if (!detection.whisperCliReady || !detection.ffmpegReady) {
-      await report("\u6B63\u5728\u5B89\u88C5 whisper-cli \u548C ffmpeg\u2026");
+      await report({ message: "\u6B63\u5728\u5B89\u88C5 whisper-cli \u548C ffmpeg\u2026", progress: 0.42, indeterminate: true });
       const brew = detection.homebrewPath || "brew";
-      await runVoiceSetupCommand(`"${brew}" install whisper-cpp ffmpeg`, 24e5);
+      await runVoiceSetupCommand(`"${brew}" install whisper-cpp ffmpeg`, 24e5, (event) => onStatus({ message: "\u6B63\u5728\u5B89\u88C5 whisper-cli \u548C ffmpeg\u2026", progress: 0.55, ...event }));
       detection = await detectVoiceEnvironment(settings.getAll());
       if (!detection.whisperCliReady || !detection.ffmpegReady) {
         throw new Error(`\u8BED\u97F3\u4F9D\u8D56\u5B89\u88C5\u540E\u4ECD\u7F3A\u5C11\uFF1A${detection.missingItems.join("\u3001")}`);
       }
     }
     if (!detection.modelReady) {
-      await report(`\u6B63\u5728\u4E0B\u8F7D ${DEFAULT_WHISPER_MODEL_KEY} \u8BED\u97F3\u6A21\u578B\u2026`);
-      const modelPath = await downloadWhisperModel(DEFAULT_WHISPER_MODEL_KEY);
+      await report({ message: `\u6B63\u5728\u4E0B\u8F7D ${DEFAULT_WHISPER_MODEL_KEY} \u8BED\u97F3\u6A21\u578B\u2026`, progress: 0.65 });
+      const modelPath = await downloadWhisperModel(DEFAULT_WHISPER_MODEL_KEY, (event) => onStatus({
+        message: `\u6B63\u5728\u4E0B\u8F7D ${DEFAULT_WHISPER_MODEL_KEY} \u8BED\u97F3\u6A21\u578B\u2026`,
+        ...event
+      }));
       await settings.set("whisperModelPath", modelPath);
       detection = await detectVoiceEnvironment(settings.getAll());
     }
     if (!detection.ready) {
       throw new Error(`\u8BED\u97F3\u73AF\u5883\u672A\u5C31\u7EEA\uFF1A${detection.missingItems.join("\u3001")}`);
     }
-    await report("\u6B63\u5728\u9A8C\u8BC1\u8BED\u97F3\u73AF\u5883\u2026");
+    await report({ message: "\u6B63\u5728\u9A8C\u8BC1\u8BED\u97F3\u73AF\u5883\u2026", progress: 0.98 });
     await saveVoiceDetection(settings, detection, "ready", "");
-    onStatus("\u8BED\u97F3\u73AF\u5883\u5DF2\u5C31\u7EEA");
+    onStatus({ message: "\u8BED\u97F3\u73AF\u5883\u5DF2\u5C31\u7EEA", progress: 1 });
     return detection;
   } catch (error) {
     const message = error instanceof Error ? error.message : "\u672A\u77E5\u9519\u8BEF";
@@ -3789,7 +3821,8 @@ async function setWhisperModelIfExists(settings, modelPath) {
     return false;
   }
 }
-async function downloadWhisperModel(modelKey) {
+async function downloadWhisperModel(modelKey, onProgress = () => {
+}) {
   const preset = WHISPER_MODEL_PRESETS.find((item) => item.key === modelKey);
   if (!preset)
     throw new Error(`\u672A\u77E5 Whisper \u6A21\u578B\uFF1A${modelKey}`);
@@ -3824,7 +3857,25 @@ async function downloadWhisperModel(modelKey) {
           reject(new Error(`\u6A21\u578B\u4E0B\u8F7D\u5931\u8D25\uFF1AHTTP ${res.statusCode}`));
           return;
         }
+        const totalBytes = Number(res.headers["content-length"] || 0);
+        let downloadedBytes = 0;
+        let lastReportAt = 0;
         const file = require("fs").createWriteStream(tempPath);
+        res.on("data", (chunk) => {
+          downloadedBytes += chunk.length;
+          const now = Date.now();
+          if (now - lastReportAt < 350 && downloadedBytes < totalBytes)
+            return;
+          lastReportAt = now;
+          const percent = totalBytes ? downloadedBytes / totalBytes : 0;
+          const downloadedMb = (downloadedBytes / 1024 / 1024).toFixed(1);
+          const totalMb = totalBytes ? (totalBytes / 1024 / 1024).toFixed(1) : "";
+          onProgress({
+            progress: totalBytes ? 0.65 + percent * 0.3 : 0.72,
+            detail: totalBytes ? `\u5DF2\u4E0B\u8F7D ${downloadedMb}MB / ${totalMb}MB` : `\u5DF2\u4E0B\u8F7D ${downloadedMb}MB`,
+            indeterminate: !totalBytes
+          });
+        });
         res.pipe(file);
         file.on("finish", () => {
           file.close(resolve);
@@ -3996,7 +4047,14 @@ var ReviewAssistantSettingTab = class extends import_obsidian2.PluginSettingTab 
       (btn) => btn.setButtonText("一键准备").setCta().onClick(async () => {
         try {
           new import_obsidian2.Notice("开始准备本地语音环境");
-          await prepareVoiceEnvironment(settings, (message) => new import_obsidian2.Notice(message));
+          let lastVoiceSetupNotice = "";
+          await prepareVoiceEnvironment(settings, (event) => {
+            const progressEvent = normalizeVoiceSetupEvent(event);
+            if (progressEvent.message && !progressEvent.detail && progressEvent.message !== lastVoiceSetupNotice) {
+              lastVoiceSetupNotice = progressEvent.message;
+              new import_obsidian2.Notice(progressEvent.message);
+            }
+          });
           this.display();
           new import_obsidian2.Notice("本地语音环境已就绪");
         } catch (error) {
@@ -4280,6 +4338,11 @@ var ReviewPanelView = class extends import_obsidian3.ItemView {
     this.voiceSetupBusy = false;
     this.voiceSetupAutoStarted = false;
     this.voiceSetupMessage = "";
+    this.voiceSetupProgress = 0;
+    this.voiceSetupProgressIndeterminate = false;
+    this.voiceSetupDetail = "";
+    this.voiceSetupLogs = [];
+    this.voiceSetupLastRenderAt = 0;
     this.statusText = "\u7B49\u5F85\u5F00\u59CB\u8FF0\u804C";
     this.messagesEl = null;
     this.answerInput = null;
@@ -4455,6 +4518,22 @@ var ReviewPanelView = class extends import_obsidian3.ItemView {
       if (error && status === "failed") {
         statusBox.createDiv({ cls: "review-onboarding-error", text: error });
       }
+      const progressValue = status === "ready" ? 1 : Math.max(0, Math.min(1, this.voiceSetupProgress || (status === "installing" ? 0.05 : 0)));
+      if (this.voiceSetupBusy || status === "installing" || status === "ready" || progressValue > 0) {
+        const progress = statusBox.createDiv({ cls: `review-onboarding-progress ${this.voiceSetupProgressIndeterminate ? "is-indeterminate" : ""}` });
+        progress.createDiv({ cls: "review-onboarding-progress-label" }, (label) => {
+          label.createSpan({ text: this.voiceSetupDetail || "\u6B63\u5728\u51C6\u5907" });
+          label.createSpan({ text: this.voiceSetupProgressIndeterminate && progressValue < 1 ? "\u5904\u7406\u4E2D" : `${Math.round(progressValue * 100)}%` });
+        });
+        progress.createDiv({ cls: "review-onboarding-progress-track" }, (track) => {
+          const fill = track.createDiv({ cls: "review-onboarding-progress-fill" });
+          fill.style.width = `${Math.max(4, Math.round(progressValue * 100))}%`;
+        });
+      }
+      if (this.voiceSetupLogs.length > 0) {
+        const logs = statusBox.createDiv({ cls: "review-onboarding-log" });
+        this.voiceSetupLogs.slice(-4).forEach((line) => logs.createDiv({ text: line }));
+      }
       const command = statusBox.createEl("code", { cls: "review-onboarding-command" });
       command.textContent = getManualVoiceSetupCommand();
       empty.createDiv({ cls: "review-empty-actions" }, (actions) => {
@@ -4498,17 +4577,43 @@ var ReviewPanelView = class extends import_obsidian3.ItemView {
     const settings = this.plugin.getSettingsManager();
     this.voiceSetupBusy = true;
     this.voiceSetupMessage = "\u6B63\u5728\u51C6\u5907\u8BED\u97F3\u73AF\u5883\u2026";
+    this.voiceSetupProgress = 0.03;
+    this.voiceSetupProgressIndeterminate = false;
+    this.voiceSetupDetail = "\u51C6\u5907\u5F00\u59CB";
+    this.voiceSetupLogs = [];
+    this.voiceSetupLastRenderAt = 0;
     this.render();
     try {
-      await prepareVoiceEnvironment(settings, (message) => {
-        this.voiceSetupMessage = message;
-        this.render();
+      await prepareVoiceEnvironment(settings, (event) => {
+        const progressEvent = normalizeVoiceSetupEvent(event);
+        if (progressEvent.message)
+          this.voiceSetupMessage = progressEvent.message;
+        if (typeof progressEvent.progress === "number")
+          this.voiceSetupProgress = Math.max(this.voiceSetupProgress, Math.max(0, Math.min(1, progressEvent.progress)));
+        this.voiceSetupProgressIndeterminate = Boolean(progressEvent.indeterminate);
+        if (progressEvent.detail) {
+          this.voiceSetupDetail = progressEvent.detail;
+          if (this.voiceSetupLogs[this.voiceSetupLogs.length - 1] !== progressEvent.detail) {
+            this.voiceSetupLogs.push(progressEvent.detail);
+            this.voiceSetupLogs = this.voiceSetupLogs.slice(-8);
+          }
+        }
+        const now = Date.now();
+        if (now - this.voiceSetupLastRenderAt > 250 || this.voiceSetupProgress >= 1) {
+          this.voiceSetupLastRenderAt = now;
+          this.render();
+        }
       });
       this.voiceSetupMessage = "\u8BED\u97F3\u73AF\u5883\u5DF2\u5C31\u7EEA";
+      this.voiceSetupProgress = 1;
+      this.voiceSetupProgressIndeterminate = false;
+      this.voiceSetupDetail = "\u5DF2\u5B8C\u6210";
       new import_obsidian3.Notice("\u521D\u59CB\u5316\u5B8C\u6210\uFF0C\u53EF\u4EE5\u5F00\u59CB\u4F7F\u7528");
       await this.initializeSession();
     } catch (error) {
       this.voiceSetupMessage = `\u8BED\u97F3\u73AF\u5883\u51C6\u5907\u5931\u8D25\uFF1A${error instanceof Error ? error.message : "\u672A\u77E5\u9519\u8BEF"}`;
+      this.voiceSetupProgressIndeterminate = false;
+      this.voiceSetupDetail = "\u51C6\u5907\u5931\u8D25";
       new import_obsidian3.Notice(this.voiceSetupMessage);
     } finally {
       this.voiceSetupBusy = false;
