@@ -1,7 +1,7 @@
 {
   "version": "1.0.6",
   "notes": "新增彩色独立插件图标，并应用到侧边栏入口、主界面顶部和空状态展示。",
-  "mainJsUrl": "https://raw.githubusercontent.com/Goblinzzzzzz/review-assistant-release/refs/heads/main/main.js",
-  "stylesCssUrl": "https://raw.githubusercontent.com/Goblinzzzzzz/review-assistant-release/refs/heads/main/styles.css",
-  "manifestUrl": "https://raw.githubusercontent.com/Goblinzzzzzz/review-assistant-release/refs/heads/main/manifest.json"
+  "mainJsUrl": "https://raw.githubusercontent.com/Goblinzzzzzz/review-assistant-release/3b0f1dade773364c61d18d9a6674cf3704caca96/main.js",
+  "stylesCssUrl": "https://raw.githubusercontent.com/Goblinzzzzzz/review-assistant-release/3b0f1dade773364c61d18d9a6674cf3704caca96/styles.css",
+  "manifestUrl": "https://raw.githubusercontent.com/Goblinzzzzzz/review-assistant-release/3b0f1dade773364c61d18d9a6674cf3704caca96/manifest.json"
 }
