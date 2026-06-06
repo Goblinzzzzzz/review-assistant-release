@@ -1,7 +1,7 @@
 {
   "version": "1.1.1",
   "notes": "新增语音播报服务配置，支持本地系统语音和腾讯云实时语音合成；继续保留腾讯云实时语音转写、本地 Whisper 初始化和在线升级能力。",
-  "mainJsUrl": "https://raw.githubusercontent.com/Goblinzzzzzz/review-assistant-release/refs/heads/main/main.js",
-  "stylesCssUrl": "https://raw.githubusercontent.com/Goblinzzzzzz/review-assistant-release/refs/heads/main/styles.css",
-  "manifestUrl": "https://raw.githubusercontent.com/Goblinzzzzzz/review-assistant-release/refs/heads/main/manifest.json"
+  "mainJsUrl": "https://raw.githubusercontent.com/Goblinzzzzzz/review-assistant-release/ece826044e2c1e9e00b17d3b577e1c4ab941d39d/main.js",
+  "stylesCssUrl": "https://raw.githubusercontent.com/Goblinzzzzzz/review-assistant-release/ece826044e2c1e9e00b17d3b577e1c4ab941d39d/styles.css",
+  "manifestUrl": "https://raw.githubusercontent.com/Goblinzzzzzz/review-assistant-release/ece826044e2c1e9e00b17d3b577e1c4ab941d39d/manifest.json"
 }
