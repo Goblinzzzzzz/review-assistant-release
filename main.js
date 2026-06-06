@@ -2768,6 +2768,8 @@ ${normalizedModel.dimensions.map((item) => `    "${item.key}": { "score": ${Math
 var AIService = class {
   constructor() {
     this.client = null;
+    this.apiKey = "";
+    this.baseURL = MOMA_API_BASE_URL;
     this.model = MOMA_DEFAULT_MODEL;
     this.questionStyle = "sharp";
     this.evaluationModel = DEFAULT_EVALUATION_MODEL;
@@ -2775,13 +2777,16 @@ var AIService = class {
   setApiKey(apiKey, baseURL, model) {
     if (!apiKey || !apiKey.trim()) {
       this.client = null;
+      this.apiKey = "";
       return;
     }
+    this.apiKey = apiKey.trim();
+    this.baseURL = (baseURL || MOMA_API_BASE_URL).replace(/\/+$/, "");
     this.client = new sdk_default({
-      apiKey: apiKey.trim(),
-      authToken: apiKey.trim(),
-      baseURL: baseURL || MOMA_API_BASE_URL,
-      defaultHeaders: { Authorization: `Bearer ${apiKey.trim()}` },
+      apiKey: this.apiKey,
+      authToken: this.apiKey,
+      baseURL: this.baseURL,
+      defaultHeaders: { Authorization: `Bearer ${this.apiKey}` },
       dangerouslyAllowBrowser: true
     });
     if (model) {
@@ -2793,6 +2798,7 @@ var AIService = class {
   }
   clearApiKey() {
     this.client = null;
+    this.apiKey = "";
   }
   setQuestionStyle(style) {
     this.questionStyle = style || "sharp";
@@ -2801,7 +2807,74 @@ var AIService = class {
     this.evaluationModel = normalizeEvaluationModel(model);
   }
   isReady() {
-    return this.client !== null;
+    return this.client !== null && this.apiKey.trim().length > 0;
+  }
+  parseMessageResponseText(rawText, contentType = "") {
+    const text = (rawText || "").trim();
+    if (!text)
+      return "";
+    if (!contentType.includes("text/event-stream") && !text.startsWith("event:") && !text.startsWith("data:")) {
+      const json = JSON.parse(text);
+      return (json.content || []).filter((block) => block.type === "text").map((block) => block.text).join("\n").trim();
+    }
+    const chunks = [];
+    for (const line of text.split(/\r?\n/)) {
+      const trimmed = line.trim();
+      if (!trimmed.startsWith("data:"))
+        continue;
+      const payload = trimmed.slice(5).trim();
+      if (!payload || payload === "[DONE]")
+        continue;
+      try {
+        const event = JSON.parse(payload);
+        if (event.type === "error" || event.error) {
+          throw new Error((event.error && (event.error.message || event.error.type)) || "\u6A21\u578B\u8FD4\u56DE\u9519\u8BEF");
+        }
+        if (event.type === "content_block_delta" && event.delta && event.delta.text) {
+          chunks.push(event.delta.text);
+        } else if (event.type === "content_block_start" && event.content_block && event.content_block.text) {
+          chunks.push(event.content_block.text);
+        } else if (event.message && Array.isArray(event.message.content)) {
+          chunks.push(...event.message.content.filter((block) => block.type === "text").map((block) => block.text));
+        }
+      } catch (error) {
+        if (error instanceof Error && error.message !== "Unexpected end of JSON input")
+          throw error;
+      }
+    }
+    return chunks.join("").trim();
+  }
+  async createMessageText({ system, messages, max_tokens }) {
+    if (!this.isReady()) {
+      throw new Error("\u8BF7\u5148\u914D\u7F6E Claude API Key");
+    }
+    const fetchImpl = typeof globalThis !== "undefined" ? globalThis.fetch : void 0;
+    if (!fetchImpl) {
+      throw new Error("\u5F53\u524D\u73AF\u5883\u4E0D\u652F\u6301 AI \u7F51\u7EDC\u8BF7\u6C42");
+    }
+    const response = await fetchImpl(`${this.baseURL}/v1/messages`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${this.apiKey}`,
+        "anthropic-version": "2023-06-01"
+      },
+      body: JSON.stringify({
+        model: this.model,
+        max_tokens,
+        ...system ? { system } : {},
+        messages
+      })
+    });
+    const rawText = await response.text();
+    if (!response.ok) {
+      throw new Error(rawText.slice(0, 300) || `HTTP ${response.status}`);
+    }
+    const parsed = this.parseMessageResponseText(rawText, response.headers.get("content-type") || "");
+    if (!parsed) {
+      throw new Error("AI\u8FD4\u56DE\u5185\u5BB9\u4E3A\u7A7A");
+    }
+    return parsed;
   }
   buildQuestionMessages(conversationHistory, latestAnswer) {
     const history = conversationHistory.map((m) => ({
@@ -2837,13 +2910,11 @@ var AIService = class {
     }
     const systemPrompt = getQuestionPrompt(material, this.questionStyle);
     const messages = this.buildQuestionMessages(conversationHistory, latestAnswer);
-    const response = await this.client.messages.create({
-      model: this.model,
+    const reply = await this.createMessageText({
       max_tokens: 1e3,
       system: systemPrompt,
       messages
     });
-    const reply = response.content.filter((block) => block.type === "text").map((block) => block.text).join("\n").trim();
     if (reply.includes("\u3010\u7ED3\u675F\u8FFD\u95EE\u3011")) {
       return {
         needFollowUp: false,
@@ -2888,12 +2959,10 @@ ${material.actions.map((a) => `- [${a.priority}] ${a.action}`).join("\n") || "\u
 \u95EE\u98981
 \u95EE\u98982
 \u95EE\u98983`;
-    const response = await this.client.messages.create({
-      model: this.model,
+    const text = await this.createMessageText({
       max_tokens: 1e3,
       messages: [{ role: "user", content: prompt }]
     });
-    const text = response.content.filter((block) => block.type === "text").map((block) => block.text).join("\n").trim();
     return text.split("\n").map((line) => line.trim().replace(/^[-*\d.、\s]+/, "").trim()).filter((line) => line.length > 0);
   }
   /**
@@ -2904,12 +2973,10 @@ ${material.actions.map((a) => `- [${a.priority}] ${a.action}`).join("\n") || "\u
       throw new Error("\u8BF7\u5148\u914D\u7F6E Claude API Key");
     }
     const prompt = getEvaluationPrompt(material, conversationHistory, this.evaluationModel);
-    const response = await this.client.messages.create({
-      model: this.model,
+    const text = await this.createMessageText({
       max_tokens: 4e3,
       messages: [{ role: "user", content: prompt }]
     });
-    const text = response.content.filter((block) => block.type === "text").map((block) => block.text).join("\n").trim();
     const jsonMatch = text.match(/\{[\s\S]*\}/);
     if (!jsonMatch) {
       throw new Error("AI\u8FD4\u56DE\u683C\u5F0F\u9519\u8BEF");
@@ -2976,12 +3043,10 @@ ${material.actions.map((a) => `- [${a.priority}] ${a.action}`).join("\n") || "\u
   "issues": ["\u95EE\u98981", "\u95EE\u98982"],
   "suggestions": ["\u5EFA\u8BAE1", "\u5EFA\u8BAE2"]
 }`;
-    const response = await this.client.messages.create({
-      model: this.model,
+    const text = await this.createMessageText({
       max_tokens: 1e3,
       messages: [{ role: "user", content: prompt }]
     });
-    const text = response.content.filter((block) => block.type === "text").map((block) => block.text).join("\n").trim();
     const jsonMatch = text.match(/\{[\s\S]*\}/);
     if (!jsonMatch) {
       return { score: 50, issues: ["\u89E3\u6790\u5931\u8D25"], suggestions: [] };
