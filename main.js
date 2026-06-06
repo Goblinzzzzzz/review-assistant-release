@@ -345,6 +345,8 @@ var DEFAULT_WHISPER_MODEL_KEY = "large-v3-turbo";
 var DEFAULT_WHISPER_MODEL_FILE = "ggml-large-v3-turbo.bin";
 var DEFAULT_WHISPER_MODEL_PATH = `${home}/.whisper-models/${DEFAULT_WHISPER_MODEL_FILE}`;
 var BUNDLED_WHISPER_MODEL_PATHS = WHISPER_MODEL_PRESETS.map((preset) => `${home}/.whisper-models/${preset.fileName}`);
+var HOMEBREW_INSTALL_COMMAND = `/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"`;
+var BREW_INSTALL_DEPENDENCIES_COMMAND = "brew install whisper-cpp ffmpeg";
 var MOMA_API_BASE_URL = "https://next.ke.com/ob/api";
 var MOMA_MANAGE_KEYS_URL = "https://moma.ke.com/manage-keys";
 var MOMA_DEFAULT_MODEL = "claude-4.6-sonnet";
@@ -392,8 +394,15 @@ var DEFAULT_SETTINGS = {
   whisperApiKey: "",
   whisperApiType: "local",
   localWhisperUrl: "http://localhost:8080",
+  homebrewPath: "",
   whisperCliPath: "/opt/homebrew/bin/whisper-cli",
+  ffmpegPath: "",
   whisperModelPath: DEFAULT_WHISPER_MODEL_PATH,
+  onboardingCompleted: false,
+  voiceSetupCompleted: false,
+  voiceSetupStatus: "pending",
+  lastVoiceSetupError: "",
+  lastVoiceSetupCheckAt: "",
   transcriptionSegmentSeconds: 12,
   whisperPrompt: DEFAULT_WHISPER_PROMPT,
   users: defaultUsers,
@@ -446,6 +455,12 @@ var SettingsManager = class {
   }
   isConfigured() {
     return this.settings.claudeApiKey.trim().length > 0;
+  }
+  isVoiceConfigured() {
+    return this.settings.voiceSetupCompleted === true;
+  }
+  isOnboardingComplete() {
+    return this.isConfigured() && this.isVoiceConfigured() && this.settings.onboardingCompleted === true;
   }
 };
 
@@ -3472,42 +3487,211 @@ var DEFAULT_SPEECH_CONFIG = {
   modelPath: DEFAULT_WHISPER_MODEL_PATH,
   language: "zh"
 };
-async function detectWhisperInstallation(configuredModelPath) {
-  const home2 = process.env.HOME || "";
-  const possiblePaths = [
-    "/opt/homebrew/bin",
-    // macOS Apple Silicon
-    "/usr/local/bin",
-    // macOS Intel
-    "/usr/bin"
-    // Linux
-  ];
-  let cliPath = "";
-  let streamPath = "";
-  for (const basePath of possiblePaths) {
-    const cli = `${basePath}/whisper-cli`;
-    const stream = `${basePath}/whisper-stream`;
+function getVoiceInstallPathEnv() {
+  const existing = process.env.PATH || "";
+  return ["/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin", "/usr/sbin", "/sbin", existing].filter(Boolean).join(":");
+}
+function summarizeCommandError(error) {
+  const parts = [
+    error && error.message,
+    error && error.stderr,
+    error && error.stdout
+  ].filter(Boolean).map((item) => String(item).trim()).filter(Boolean);
+  const text = parts.join("\n").split("\n").map((line) => line.trim()).filter(Boolean).slice(-5).join("；");
+  return text.slice(0, 320) || "\u672A\u77E5\u9519\u8BEF";
+}
+async function runVoiceSetupCommand(command, timeoutMs = 18e5) {
+  const { promisify } = require("util");
+  const { execFile } = require("child_process");
+  const execFileAsync = promisify(execFile);
+  try {
+    const result = await execFileAsync("/bin/bash", ["-lc", command], {
+      env: {
+        ...process.env,
+        NONINTERACTIVE: "1",
+        PATH: getVoiceInstallPathEnv()
+      },
+      timeout: timeoutMs,
+      maxBuffer: 20 * 1024 * 1024
+    });
+    if (result.stdout)
+      console.log("\u8FF0\u804C\u52A9\u624B\u8BED\u97F3\u73AF\u5883\u5B89\u88C5\u8F93\u51FA", result.stdout);
+    if (result.stderr)
+      console.log("\u8FF0\u804C\u52A9\u624B\u8BED\u97F3\u73AF\u5883\u5B89\u88C5\u63D0\u793A", result.stderr);
+    return result;
+  } catch (error) {
+    console.error("\u8FF0\u804C\u52A9\u624B\u8BED\u97F3\u73AF\u5883\u5B89\u88C5\u5931\u8D25", error);
+    throw new Error(summarizeCommandError(error));
+  }
+}
+async function fileExists(filePath) {
+  if (!filePath)
+    return false;
+  try {
+    const { promises: fs } = require("fs");
+    await fs.access(filePath);
+    return true;
+  } catch (e) {
+    return false;
+  }
+}
+async function findExecutable(command, configuredPath = "", extraCandidates = []) {
+  const { promises: fs, constants } = require("fs");
+  const { promisify } = require("util");
+  const { execFile } = require("child_process");
+  const execFileAsync = promisify(execFile);
+  const candidates = [
+    configuredPath,
+    ...extraCandidates,
+    `/opt/homebrew/bin/${command}`,
+    `/usr/local/bin/${command}`,
+    `/usr/bin/${command}`
+  ].filter(Boolean);
+  for (const candidate of candidates) {
     try {
-      const { statSync } = require("fs");
-      if (statSync(cli).isFile())
-        cliPath = cli;
-      if (statSync(stream).isFile())
-        streamPath = stream;
+      await fs.access(candidate, constants.X_OK);
+      return candidate;
     } catch (e) {
     }
   }
-  const modelPath = configuredModelPath || `${home2}/.whisper-models/${DEFAULT_WHISPER_MODEL_FILE}`;
-  let modelExists = false;
   try {
-    const { statSync } = require("fs");
-    modelExists = statSync(modelPath).isFile();
+    const { stdout } = await execFileAsync("/bin/bash", ["-lc", `command -v ${command}`], {
+      env: { ...process.env, PATH: getVoiceInstallPathEnv() },
+      timeout: 5e3,
+      maxBuffer: 1024 * 1024
+    });
+    return stdout.trim().split("\n")[0] || "";
   } catch (e) {
+    return "";
   }
+}
+function getManualVoiceSetupCommand() {
+  return `${HOMEBREW_INSTALL_COMMAND}\n${BREW_INSTALL_DEPENDENCIES_COMMAND}`;
+}
+async function copyTextToClipboard(text) {
+  if (typeof navigator !== "undefined" && navigator.clipboard && navigator.clipboard.writeText) {
+    await navigator.clipboard.writeText(text);
+    return;
+  }
+  const textarea = document.createElement("textarea");
+  textarea.value = text;
+  textarea.style.position = "fixed";
+  textarea.style.left = "-9999px";
+  document.body.appendChild(textarea);
+  textarea.select();
+  document.execCommand("copy");
+  textarea.remove();
+}
+async function detectVoiceEnvironment(config = {}) {
+  const modelPath = config.whisperModelPath || DEFAULT_WHISPER_MODEL_PATH;
+  const homebrewPath = await findExecutable("brew", config.homebrewPath, ["/opt/homebrew/bin/brew", "/usr/local/bin/brew"]);
+  const whisperCliPath = await findExecutable("whisper-cli", config.whisperCliPath);
+  const ffmpegPath = await findExecutable("ffmpeg", config.ffmpegPath);
+  const streamPath = await findExecutable("whisper-stream", "", ["/opt/homebrew/bin/whisper-stream", "/usr/local/bin/whisper-stream"]);
+  const modelReady = await fileExists(modelPath);
+  const missingItems = [];
+  if (!homebrewPath)
+    missingItems.push("Homebrew");
+  if (!whisperCliPath)
+    missingItems.push("whisper-cli");
+  if (!ffmpegPath)
+    missingItems.push("ffmpeg");
+  if (!modelReady)
+    missingItems.push(DEFAULT_WHISPER_MODEL_FILE);
   return {
-    installed: cliPath !== "" && modelExists,
-    cliPath,
+    ready: Boolean(homebrewPath && whisperCliPath && ffmpegPath && modelReady),
+    homebrewReady: Boolean(homebrewPath),
+    whisperCliReady: Boolean(whisperCliPath),
+    ffmpegReady: Boolean(ffmpegPath),
+    modelReady,
+    homebrewPath,
+    cliPath: whisperCliPath,
+    ffmpegPath,
     streamPath,
-    modelPath
+    modelPath,
+    missingItems
+  };
+}
+async function saveVoiceDetection(settings, detection, status = null, error = "") {
+  await settings.update({
+    homebrewPath: detection.homebrewPath || settings.get("homebrewPath") || "",
+    whisperCliPath: detection.cliPath || settings.get("whisperCliPath") || "",
+    ffmpegPath: detection.ffmpegPath || settings.get("ffmpegPath") || "",
+    whisperModelPath: detection.modelPath || DEFAULT_WHISPER_MODEL_PATH,
+    voiceSetupCompleted: detection.ready,
+    onboardingCompleted: settings.isConfigured() && detection.ready,
+    voiceSetupStatus: status || (detection.ready ? "ready" : "pending"),
+    lastVoiceSetupError: error,
+    lastVoiceSetupCheckAt: new Date().toISOString()
+  });
+}
+async function refreshVoiceSetupState(settings) {
+  const detection = await detectVoiceEnvironment(settings.getAll());
+  await saveVoiceDetection(settings, detection, detection.ready ? "ready" : "pending", detection.ready ? "" : `\u7F3A\u5C11\uFF1A${detection.missingItems.join("\u3001")}`);
+  return detection;
+}
+async function prepareVoiceEnvironment(settings, onStatus = () => {
+}) {
+  const report = async (message) => {
+    await settings.update({
+      voiceSetupStatus: "installing",
+      lastVoiceSetupError: "",
+      lastVoiceSetupCheckAt: new Date().toISOString()
+    });
+    onStatus(message);
+  };
+  try {
+    await report("\u6B63\u5728\u68C0\u6D4B\u672C\u5730\u8BED\u97F3\u73AF\u5883\u2026");
+    if (process.platform !== "darwin") {
+      throw new Error("\u5F53\u524D\u81EA\u52A8\u5B89\u88C5\u4EC5\u652F\u6301 macOS \u684C\u9762\u7AEF");
+    }
+    let detection = await detectVoiceEnvironment(settings.getAll());
+    if (!detection.homebrewReady) {
+      await report("\u6B63\u5728\u5B89\u88C5 Homebrew\u2026");
+      await runVoiceSetupCommand(HOMEBREW_INSTALL_COMMAND, 18e5);
+      detection = await detectVoiceEnvironment(settings.getAll());
+      if (!detection.homebrewReady) {
+        throw new Error("Homebrew \u5B89\u88C5\u540E\u4ECD\u672A\u68C0\u6D4B\u5230\uFF0C\u8BF7\u624B\u52A8\u6267\u884C\u5B89\u88C5\u547D\u4EE4");
+      }
+    }
+    if (!detection.whisperCliReady || !detection.ffmpegReady) {
+      await report("\u6B63\u5728\u5B89\u88C5 whisper-cli \u548C ffmpeg\u2026");
+      const brew = detection.homebrewPath || "brew";
+      await runVoiceSetupCommand(`"${brew}" install whisper-cpp ffmpeg`, 24e5);
+      detection = await detectVoiceEnvironment(settings.getAll());
+      if (!detection.whisperCliReady || !detection.ffmpegReady) {
+        throw new Error(`\u8BED\u97F3\u4F9D\u8D56\u5B89\u88C5\u540E\u4ECD\u7F3A\u5C11\uFF1A${detection.missingItems.join("\u3001")}`);
+      }
+    }
+    if (!detection.modelReady) {
+      await report(`\u6B63\u5728\u4E0B\u8F7D ${DEFAULT_WHISPER_MODEL_KEY} \u8BED\u97F3\u6A21\u578B\u2026`);
+      const modelPath = await downloadWhisperModel(DEFAULT_WHISPER_MODEL_KEY);
+      await settings.set("whisperModelPath", modelPath);
+      detection = await detectVoiceEnvironment(settings.getAll());
+    }
+    if (!detection.ready) {
+      throw new Error(`\u8BED\u97F3\u73AF\u5883\u672A\u5C31\u7EEA\uFF1A${detection.missingItems.join("\u3001")}`);
+    }
+    await report("\u6B63\u5728\u9A8C\u8BC1\u8BED\u97F3\u73AF\u5883\u2026");
+    await saveVoiceDetection(settings, detection, "ready", "");
+    onStatus("\u8BED\u97F3\u73AF\u5883\u5DF2\u5C31\u7EEA");
+    return detection;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "\u672A\u77E5\u9519\u8BEF";
+    const detection = await detectVoiceEnvironment(settings.getAll());
+    await saveVoiceDetection(settings, detection, "failed", message);
+    throw error;
+  }
+}
+async function detectWhisperInstallation(configuredModelPath) {
+  const detection = await detectVoiceEnvironment({ whisperModelPath: configuredModelPath });
+  return {
+    installed: detection.ready,
+    cliPath: detection.cliPath,
+    streamPath: detection.streamPath,
+    ffmpegPath: detection.ffmpegPath,
+    modelPath: detection.modelPath,
+    missingItems: detection.missingItems
   };
 }
 async function resolveWhisperModelPath(configuredPath) {
@@ -3732,42 +3916,73 @@ var ReviewAssistantSettingTab = class extends import_obsidian2.PluginSettingTab 
 
     const speechCard = this.createSettingsCard(container, "语音识别配置", "默认使用 large-v3-turbo 高精度中文识别模型，并保留本地路径和专业词提示。");
     const currentModelPath = settings.get("whisperModelPath") || DEFAULT_WHISPER_MODEL_PATH;
-    const whisperStatus = await detectWhisperInstallation(currentModelPath);
+    const voiceStatus = await detectVoiceEnvironment(settings.getAll());
     const statusDiv = speechCard.createDiv("whisper-status");
-    if (whisperStatus.installed) {
-      statusDiv.createEl("p", { text: `✅ whisper.cpp 已安装，当前模型：${currentModelPath}`, cls: "setting-status-success" });
+    if (voiceStatus.ready) {
+      statusDiv.createEl("p", { text: `✅ 本地语音识别环境已就绪，当前模型：${voiceStatus.modelPath}`, cls: "setting-status-success" });
     } else {
-      statusDiv.createEl("p", { text: `⚠️ whisper.cpp 未安装，或默认模型尚未下载：${DEFAULT_WHISPER_MODEL_PATH}`, cls: "setting-status-warning" });
+      statusDiv.createEl("p", { text: `⚠️ 语音环境未就绪：${voiceStatus.missingItems.join("、") || "未知原因"}`, cls: "setting-status-warning" });
     }
-    new import_obsidian2.Setting(speechCard).setName("Whisper CLI 路径").setDesc("whisper-cli 可执行文件的路径").addText(
-      (text) => text.setPlaceholder("/opt/homebrew/bin/whisper-cli").setValue(settings.get("whisperCliPath")).onChange(async (value) => {
-        await settings.set("whisperCliPath", value);
+    statusDiv.createEl("p", { text: `Homebrew：${voiceStatus.homebrewPath || "未检测到"}` });
+    statusDiv.createEl("p", { text: `whisper-cli：${voiceStatus.cliPath || "未检测到"}` });
+    statusDiv.createEl("p", { text: `ffmpeg：${voiceStatus.ffmpegPath || "未检测到"}` });
+    statusDiv.createEl("p", { text: `模型文件：${voiceStatus.modelReady ? voiceStatus.modelPath : `未下载（${DEFAULT_WHISPER_MODEL_PATH}）`}` });
+    new import_obsidian2.Setting(speechCard).setName("语音环境初始化").setDesc("首次使用会自动准备 Homebrew、whisper-cli、ffmpeg 和默认模型；失败时可复制命令手动执行。").addButton(
+      (btn) => btn.setButtonText("一键准备").setCta().onClick(async () => {
+        try {
+          new import_obsidian2.Notice("开始准备本地语音环境");
+          await prepareVoiceEnvironment(settings, (message) => new import_obsidian2.Notice(message));
+          this.display();
+          new import_obsidian2.Notice("本地语音环境已就绪");
+        } catch (error) {
+          this.display();
+          new import_obsidian2.Notice(`语音环境准备失败：${error instanceof Error ? error.message : "未知错误"}`);
+        }
       })
-    );
-    const modelPresetsDiv = speechCard.createDiv("whisper-model-presets");
-    new import_obsidian2.Setting(modelPresetsDiv).setName("默认高精度模型").setDesc(`插件默认使用 ${DEFAULT_WHISPER_MODEL_KEY}，中文准确率优先。`).addButton(
-      (btn) => btn.setButtonText("使用默认模型").onClick(async () => {
-        await setWhisperModelIfExists(settings, DEFAULT_WHISPER_MODEL_PATH);
-        this.display();
-      })
-    );
-    new import_obsidian2.Setting(modelPresetsDiv).setName("下载语音模型").setDesc("缺少模型时可从 whisper.cpp 模型仓库下载。默认模型体积约 1.5GB。").addButton(
-      (btn) => btn.setButtonText("下载默认模型").onClick(async () => {
-        const modelPath = await downloadWhisperModel(DEFAULT_WHISPER_MODEL_KEY);
-        await settings.set("whisperModelPath", modelPath);
-        new import_obsidian2.Notice(`${DEFAULT_WHISPER_MODEL_KEY} 模型下载完成`);
+    ).addButton(
+      (btn) => btn.setButtonText("重新检测").onClick(async () => {
+        await refreshVoiceSetupState(settings);
         this.display();
       })
     ).addButton(
-      (btn) => btn.setButtonText("下载全部").onClick(async () => {
-        await downloadAllWhisperModels(settings);
-        new import_obsidian2.Notice("Whisper 模型全部下载完成");
+      (btn) => btn.setButtonText("复制命令").onClick(async () => {
+        await copyTextToClipboard(getManualVoiceSetupCommand());
+        new import_obsidian2.Notice("已复制手动安装命令");
+      })
+    );
+    new import_obsidian2.Setting(speechCard).setName("Whisper CLI 路径").setDesc("whisper-cli 可执行文件的路径").addText(
+      (text) => text.setPlaceholder("/opt/homebrew/bin/whisper-cli").setValue(settings.get("whisperCliPath")).onChange(async (value) => {
+        await settings.set("whisperCliPath", value);
+        await settings.update({ voiceSetupCompleted: false, onboardingCompleted: false, voiceSetupStatus: "pending" });
+      })
+    );
+    new import_obsidian2.Setting(speechCard).setName("FFmpeg 路径").setDesc("ffmpeg 可执行文件的路径，留空时自动扫描常见路径。").addText(
+      (text) => text.setPlaceholder("/opt/homebrew/bin/ffmpeg").setValue(settings.get("ffmpegPath")).onChange(async (value) => {
+        await settings.set("ffmpegPath", value.trim());
+        await settings.update({ voiceSetupCompleted: false, onboardingCompleted: false, voiceSetupStatus: "pending" });
+      })
+    );
+    const modelPresetsDiv = speechCard.createDiv("whisper-model-presets");
+    new import_obsidian2.Setting(modelPresetsDiv).setName("默认高精度模型").setDesc(`插件固定默认使用 ${DEFAULT_WHISPER_MODEL_KEY}，中文准确率优先。`).addButton(
+      (btn) => btn.setButtonText("使用默认模型").onClick(async () => {
+        await setWhisperModelIfExists(settings, DEFAULT_WHISPER_MODEL_PATH);
+        await refreshVoiceSetupState(settings);
+        this.display();
+      })
+    );
+    new import_obsidian2.Setting(modelPresetsDiv).setName("重新下载默认模型").setDesc("缺少模型时可从 whisper.cpp 模型仓库下载。默认模型体积约 1.5GB。").addButton(
+      (btn) => btn.setButtonText("下载 large-v3-turbo").onClick(async () => {
+        const modelPath = await downloadWhisperModel(DEFAULT_WHISPER_MODEL_KEY);
+        await settings.set("whisperModelPath", modelPath);
+        await refreshVoiceSetupState(settings);
+        new import_obsidian2.Notice(`${DEFAULT_WHISPER_MODEL_KEY} 模型下载完成`);
         this.display();
       })
     );
     new import_obsidian2.Setting(speechCard).setName("高级：自定义模型路径").setDesc("通常无需修改。仅当你要使用其他本地 .bin 模型时填写。").addText(
       (text) => text.setPlaceholder(DEFAULT_WHISPER_MODEL_PATH).setValue(currentModelPath).onChange(async (value) => {
         await settings.set("whisperModelPath", value.trim() || DEFAULT_WHISPER_MODEL_PATH);
+        await settings.update({ voiceSetupCompleted: false, onboardingCompleted: false, voiceSetupStatus: "pending" });
       })
     );
     new import_obsidian2.Setting(speechCard).setName("分段转写时长").setDesc("单段越长，中文上下文越完整，但实时性越低。建议 10-15 秒").addSlider(
@@ -3997,6 +4212,9 @@ var ReviewPanelView = class extends import_obsidian3.ItemView {
     this.currentSegmentChunks = [];
     this.isStoppingRecording = false;
     this.missingWhisperModelNoticeShown = false;
+    this.voiceSetupBusy = false;
+    this.voiceSetupAutoStarted = false;
+    this.voiceSetupMessage = "";
     this.statusText = "\u7B49\u5F85\u5F00\u59CB\u8FF0\u804C";
     this.messagesEl = null;
     this.answerInput = null;
@@ -4087,8 +4305,8 @@ var ReviewPanelView = class extends import_obsidian3.ItemView {
     const contentEl = this.contentEl || ((_a2 = this.containerEl) == null ? void 0 : _a2.children[1]) || this.containerEl;
     contentEl.empty();
     const containerEl = contentEl.createDiv({ cls: "review-workbench" });
-    if (!this.plugin.getSettingsManager().isConfigured()) {
-      this.renderNotConfigured(containerEl);
+    if (!this.plugin.getSettingsManager().isOnboardingComplete()) {
+      this.renderOnboarding(containerEl);
       this.renderFooter(containerEl);
       return;
     }
@@ -4104,11 +4322,19 @@ var ReviewPanelView = class extends import_obsidian3.ItemView {
     this.renderToolbar(containerEl);
     this.renderFooter(containerEl);
   }
-  renderNotConfigured(container) {
+  renderOnboarding(container) {
+    const settings = this.plugin.getSettingsManager();
+    if (!settings.isConfigured()) {
+      this.renderApiKeySetup(container);
+      return;
+    }
+    this.renderVoiceSetup(container);
+  }
+  renderApiKeySetup(container) {
     container.createDiv({ cls: "review-empty" }, (empty) => {
       empty.createDiv({ cls: "review-empty-icon", text: "\u26A0\uFE0F" });
-      empty.createDiv({ cls: "review-empty-title", text: "\u914D\u7F6E Moma API Key" });
-      empty.createDiv({ cls: "review-empty-desc", text: "\u8FF0\u804C\u52A9\u624B\u4F7F\u7528\u4E0E Moma \u76F8\u540C\u7684 AI \u7F51\u5173\u548C Key\u3002\u8BF7\u5148\u5B8C\u6210\u8BA4\u8BC1\u3002" });
+      empty.createDiv({ cls: "review-empty-title", text: "\u521D\u59CB\u5316\uFF1A\u914D\u7F6E Moma API Key" });
+      empty.createDiv({ cls: "review-empty-desc", text: "\u9996\u6B21\u4F7F\u7528\u9700\u8981\u5148\u5B8C\u6210 AI \u8BA4\u8BC1\uFF0C\u968F\u540E\u4F1A\u81EA\u52A8\u51C6\u5907\u672C\u5730\u8BED\u97F3\u8BC6\u522B\u73AF\u5883\u3002" });
       let pendingKey = "";
       const input = empty.createEl("input", {
         cls: "review-api-key-input",
@@ -4133,8 +4359,9 @@ var ReviewPanelView = class extends import_obsidian3.ItemView {
           });
           this.plugin.getAIService().setApiKey(pendingKey, MOMA_API_BASE_URL, MOMA_DEFAULT_MODEL);
           new import_obsidian3.Notice("Moma API Key 验证通过，AI 已就绪");
-          await this.initializeSession();
+          this.voiceSetupAutoStarted = false;
           this.render();
+          await this.runVoiceSetup();
         });
         const manage = actions.createEl("button", { cls: "review-secondary-btn", text: "\u7533\u8BF7/\u7BA1\u7406 Key" });
         manage.addEventListener("click", () => openMomaManageKeys());
@@ -4145,6 +4372,83 @@ var ReviewPanelView = class extends import_obsidian3.ItemView {
         });
       });
     });
+  }
+  renderVoiceSetup(container) {
+    const settings = this.plugin.getSettingsManager();
+    const status = settings.get("voiceSetupStatus") || "pending";
+    const error = settings.get("lastVoiceSetupError") || "";
+    if (!this.voiceSetupBusy && !this.voiceSetupAutoStarted && status !== "failed") {
+      this.voiceSetupAutoStarted = true;
+      setTimeout(() => this.runVoiceSetup(), 0);
+    }
+    container.createDiv({ cls: "review-empty review-onboarding" }, (empty) => {
+      empty.createDiv({ cls: "review-empty-icon", text: status === "ready" ? "\u2705" : "\u{1F399}" });
+      empty.createDiv({ cls: "review-empty-title", text: "\u521D\u59CB\u5316\uFF1A\u51C6\u5907\u672C\u5730\u8BED\u97F3\u8BC6\u522B" });
+      empty.createDiv({ cls: "review-empty-desc", text: "\u6B63\u5728\u68C0\u6D4B\u5E76\u51C6\u5907 Homebrew\u3001whisper-cli\u3001ffmpeg \u548C large-v3-turbo \u6A21\u578B\u3002\u5B8C\u6210\u524D\u4E0D\u4F1A\u8FDB\u5165\u5DE5\u4F5C\u53F0\u3002" });
+      const statusBox = empty.createDiv({ cls: `review-onboarding-status ${status}` });
+      statusBox.createDiv({ cls: "review-onboarding-status-title", text: this.voiceSetupMessage || this.getVoiceSetupStatusText(status) });
+      if (error && status === "failed") {
+        statusBox.createDiv({ cls: "review-onboarding-error", text: error });
+      }
+      const command = statusBox.createEl("code", { cls: "review-onboarding-command" });
+      command.textContent = getManualVoiceSetupCommand();
+      empty.createDiv({ cls: "review-empty-actions" }, (actions) => {
+        const retry = actions.createEl("button", { cls: "review-primary-btn", text: this.voiceSetupBusy ? "\u51C6\u5907\u4E2D\u2026" : "\u91CD\u8BD5\u81EA\u52A8\u51C6\u5907" });
+        retry.disabled = this.voiceSetupBusy;
+        retry.addEventListener("click", async () => {
+          this.voiceSetupAutoStarted = true;
+          await this.runVoiceSetup();
+        });
+        const recheck = actions.createEl("button", { cls: "review-secondary-btn", text: "\u91CD\u65B0\u68C0\u6D4B" });
+        recheck.disabled = this.voiceSetupBusy;
+        recheck.addEventListener("click", async () => {
+          const detection = await refreshVoiceSetupState(settings);
+          this.voiceSetupMessage = detection.ready ? "\u8BED\u97F3\u73AF\u5883\u5DF2\u5C31\u7EEA" : `\u4ECD\u7F3A\u5C11\uFF1A${detection.missingItems.join("\u3001")}`;
+          if (detection.ready) {
+            await this.initializeSession();
+          }
+          this.render();
+        });
+        const copy = actions.createEl("button", { cls: "review-outline-btn", text: "\u590D\u5236\u624B\u52A8\u547D\u4EE4" });
+        copy.disabled = this.voiceSetupBusy;
+        copy.addEventListener("click", async () => {
+          await copyTextToClipboard(getManualVoiceSetupCommand());
+          new import_obsidian3.Notice("\u5DF2\u590D\u5236\u624B\u52A8\u5B89\u88C5\u547D\u4EE4");
+        });
+      });
+    });
+  }
+  getVoiceSetupStatusText(status) {
+    if (status === "ready")
+      return "\u8BED\u97F3\u73AF\u5883\u5DF2\u5C31\u7EEA";
+    if (status === "failed")
+      return "\u8BED\u97F3\u73AF\u5883\u51C6\u5907\u5931\u8D25";
+    if (status === "installing")
+      return "\u6B63\u5728\u51C6\u5907\u8BED\u97F3\u73AF\u5883\u2026";
+    return "\u6B63\u5728\u7B49\u5F85\u8BED\u97F3\u73AF\u5883\u521D\u59CB\u5316";
+  }
+  async runVoiceSetup() {
+    if (this.voiceSetupBusy)
+      return;
+    const settings = this.plugin.getSettingsManager();
+    this.voiceSetupBusy = true;
+    this.voiceSetupMessage = "\u6B63\u5728\u51C6\u5907\u8BED\u97F3\u73AF\u5883\u2026";
+    this.render();
+    try {
+      await prepareVoiceEnvironment(settings, (message) => {
+        this.voiceSetupMessage = message;
+        this.render();
+      });
+      this.voiceSetupMessage = "\u8BED\u97F3\u73AF\u5883\u5DF2\u5C31\u7EEA";
+      new import_obsidian3.Notice("\u521D\u59CB\u5316\u5B8C\u6210\uFF0C\u53EF\u4EE5\u5F00\u59CB\u4F7F\u7528");
+      await this.initializeSession();
+    } catch (error) {
+      this.voiceSetupMessage = `\u8BED\u97F3\u73AF\u5883\u51C6\u5907\u5931\u8D25\uFF1A${error instanceof Error ? error.message : "\u672A\u77E5\u9519\u8BEF"}`;
+      new import_obsidian3.Notice(this.voiceSetupMessage);
+    } finally {
+      this.voiceSetupBusy = false;
+      this.render();
+    }
   }
   renderNoUsers(container) {
     container.createDiv({ cls: "review-main" }, (main) => {
@@ -4681,7 +4985,8 @@ var ReviewPanelView = class extends import_obsidian3.ItemView {
     }
   }
   async convertAudioToWav(inputPath, outputPath, execFileAsync, fs) {
-    const ffmpegCandidates = ["/opt/homebrew/bin/ffmpeg", "/usr/local/bin/ffmpeg", "ffmpeg"];
+    const configuredFfmpegPath = this.plugin.getSettingsManager().get("ffmpegPath");
+    const ffmpegCandidates = [configuredFfmpegPath, "/opt/homebrew/bin/ffmpeg", "/usr/local/bin/ffmpeg", "ffmpeg"].filter(Boolean);
     let lastError = null;
     for (const ffmpeg of ffmpegCandidates) {
       try {
@@ -4901,6 +5206,7 @@ var ReviewAssistantPlugin = class extends import_obsidian4.Plugin {
       { ...DEFAULT_SETTINGS, ...savedSettings },
       () => this.saveData(this.settingsManager.getAll())
     );
+    await this.syncVoiceSetupState();
     this.aiService = new AIService();
     this.aiService.setQuestionStyle(this.settingsManager.get("questionStyle"));
     this.aiService.setEvaluationModel(this.settingsManager.get("evaluationModel"));
@@ -4929,6 +5235,13 @@ var ReviewAssistantPlugin = class extends import_obsidian4.Plugin {
   onunload() {
     eventBus.clear();
     console.log(`${REVIEW_ASSISTANT_PLUGIN_NAME}\u63D2\u4EF6\u5378\u8F7D`);
+  }
+  async syncVoiceSetupState() {
+    try {
+      await refreshVoiceSetupState(this.settingsManager);
+    } catch (error) {
+      console.error("\u8FF0\u804C\u52A9\u624B\u8BED\u97F3\u73AF\u5883\u68C0\u6D4B\u5931\u8D25", error);
+    }
   }
   async loadPluginStyles() {
     try {
