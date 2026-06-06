@@ -346,7 +346,7 @@ var DEFAULT_WHISPER_MODEL_FILE = "ggml-large-v3-turbo.bin";
 var DEFAULT_WHISPER_MODEL_PATH = `${home}/.whisper-models/${DEFAULT_WHISPER_MODEL_FILE}`;
 var BUNDLED_WHISPER_MODEL_PATHS = WHISPER_MODEL_PRESETS.map((preset) => `${home}/.whisper-models/${preset.fileName}`);
 var HOMEBREW_INSTALL_COMMAND = `/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"`;
-var BREW_INSTALL_DEPENDENCIES_COMMAND = "brew install whisper-cpp ffmpeg";
+var BREW_INSTALL_DEPENDENCIES_COMMAND = "brew update && brew install whisper-cpp ffmpeg";
 var MOMA_API_BASE_URL = "https://next.ke.com/ob/api";
 var MOMA_MANAGE_KEYS_URL = "https://moma.ke.com/manage-keys";
 var MOMA_DEFAULT_MODEL = "claude-4.6-sonnet";
@@ -3562,8 +3562,8 @@ function summarizeCommandError(error) {
     error && error.stderr,
     error && error.stdout
   ].filter(Boolean).map((item) => String(item).trim()).filter(Boolean);
-  const text = parts.join("\n").split("\n").map((line) => line.trim()).filter(Boolean).slice(-5).join("；");
-  return text.slice(0, 320) || "\u672A\u77E5\u9519\u8BEF";
+  const text = parts.join("\n").split("\n").map((line) => line.trim()).filter(Boolean).slice(-8).join("；");
+  return text.slice(0, 600) || "\u672A\u77E5\u9519\u8BEF";
 }
 function normalizeVoiceSetupEvent(event) {
   if (typeof event === "string") {
@@ -3616,6 +3616,28 @@ async function runVoiceSetupCommand(command, timeoutMs = 18e5, onProgress = () =
     console.error("\u8FF0\u804C\u52A9\u624B\u8BED\u97F3\u73AF\u5883\u5B89\u88C5\u5931\u8D25", error);
     throw new Error(summarizeCommandError(error));
   });
+}
+function isBrewUpdateRequiredError(error) {
+  const message = error instanceof Error ? error.message : String(error || "");
+  return /brew update|update homebrew|outdated|no available formula|api source/i.test(message);
+}
+async function installVoiceDependenciesWithBrew(brewPath, onStatus = () => {
+}) {
+  const brew = brewPath || "brew";
+  const runWithStatus = async (command, message, progress, timeoutMs) => {
+    await runVoiceSetupCommand(command, timeoutMs, (event) => onStatus({ message, progress, ...event }));
+  };
+  await runWithStatus(`"${brew}" update`, "\u6B63\u5728\u66F4\u65B0 Homebrew\u2026", 0.36, 18e5);
+  try {
+    await runWithStatus(`"${brew}" install whisper-cpp ffmpeg`, "\u6B63\u5728\u5B89\u88C5 whisper-cli \u548C ffmpeg\u2026", 0.55, 24e5);
+  } catch (error) {
+    if (!isBrewUpdateRequiredError(error)) {
+      throw error;
+    }
+    onStatus({ message: "\u68C0\u6D4B\u5230 Homebrew \u9700\u8981\u91CD\u65B0\u66F4\u65B0\uFF0C\u6B63\u5728\u91CD\u8BD5\u2026", progress: 0.5, indeterminate: true });
+    await runWithStatus(`"${brew}" update`, "\u6B63\u5728\u66F4\u65B0 Homebrew\u2026", 0.5, 18e5);
+    await runWithStatus(`"${brew}" install whisper-cpp ffmpeg`, "\u6B63\u5728\u5B89\u88C5 whisper-cli \u548C ffmpeg\u2026", 0.58, 24e5);
+  }
 }
 async function fileExists(filePath) {
   if (!filePath)
@@ -3751,7 +3773,7 @@ async function prepareVoiceEnvironment(settings, onStatus = () => {
     if (!detection.whisperCliReady || !detection.ffmpegReady) {
       await report({ message: "\u6B63\u5728\u5B89\u88C5 whisper-cli \u548C ffmpeg\u2026", progress: 0.42, indeterminate: true });
       const brew = detection.homebrewPath || "brew";
-      await runVoiceSetupCommand(`"${brew}" install whisper-cpp ffmpeg`, 24e5, (event) => onStatus({ message: "\u6B63\u5728\u5B89\u88C5 whisper-cli \u548C ffmpeg\u2026", progress: 0.55, ...event }));
+      await installVoiceDependenciesWithBrew(brew, onStatus);
       detection = await detectVoiceEnvironment(settings.getAll());
       if (!detection.whisperCliReady || !detection.ffmpegReady) {
         throw new Error(`\u8BED\u97F3\u4F9D\u8D56\u5B89\u88C5\u540E\u4ECD\u7F3A\u5C11\uFF1A${detection.missingItems.join("\u3001")}`);
