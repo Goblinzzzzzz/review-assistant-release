@@ -1,7 +1,7 @@
 {
   "version": "1.0.3",
   "notes": "自动检查更新使用更稳定的 GitHub refs 地址，并兼容迁移旧升级清单地址；首次安装默认不再内置测试述职人。",
-  "mainJsUrl": "https://raw.githubusercontent.com/Goblinzzzzzz/review-assistant-release/refs/heads/main/main.js",
-  "stylesCssUrl": "https://raw.githubusercontent.com/Goblinzzzzzz/review-assistant-release/refs/heads/main/styles.css",
-  "manifestUrl": "https://raw.githubusercontent.com/Goblinzzzzzz/review-assistant-release/refs/heads/main/manifest.json"
+  "mainJsUrl": "https://raw.githubusercontent.com/Goblinzzzzzz/review-assistant-release/b00fb418e80bb1ec06b2da476fb8d2d7acaf027c/main.js",
+  "stylesCssUrl": "https://raw.githubusercontent.com/Goblinzzzzzz/review-assistant-release/b00fb418e80bb1ec06b2da476fb8d2d7acaf027c/styles.css",
+  "manifestUrl": "https://raw.githubusercontent.com/Goblinzzzzzz/review-assistant-release/b00fb418e80bb1ec06b2da476fb8d2d7acaf027c/manifest.json"
 }
