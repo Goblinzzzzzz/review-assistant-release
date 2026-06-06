@@ -1,7 +1,7 @@
 {
   "version": "1.0.7",
   "notes": "新增首次初始化语音环境向导，自动准备 Homebrew、whisper-cli、ffmpeg 和 large-v3-turbo 模型；插件改为桌面端专用。",
-  "mainJsUrl": "https://raw.githubusercontent.com/Goblinzzzzzz/review-assistant-release/refs/heads/main/main.js",
-  "stylesCssUrl": "https://raw.githubusercontent.com/Goblinzzzzzz/review-assistant-release/refs/heads/main/styles.css",
-  "manifestUrl": "https://raw.githubusercontent.com/Goblinzzzzzz/review-assistant-release/refs/heads/main/manifest.json"
+  "mainJsUrl": "https://raw.githubusercontent.com/Goblinzzzzzz/review-assistant-release/748f89db8d914c620a83d779814c21c62e3db5e7/main.js",
+  "stylesCssUrl": "https://raw.githubusercontent.com/Goblinzzzzzz/review-assistant-release/748f89db8d914c620a83d779814c21c62e3db5e7/styles.css",
+  "manifestUrl": "https://raw.githubusercontent.com/Goblinzzzzzz/review-assistant-release/748f89db8d914c620a83d779814c21c62e3db5e7/manifest.json"
 }
