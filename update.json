@@ -1,7 +1,7 @@
 {
   "version": "1.0.10",
   "notes": "修复首次初始化安装语音依赖时 Homebrew 公式索引过旧导致失败的问题，安装 whisper-cli 和 ffmpeg 前会先执行 brew update，并在更新类错误时自动重试。",
-  "mainJsUrl": "https://raw.githubusercontent.com/Goblinzzzzzz/review-assistant-release/refs/heads/main/main.js",
-  "stylesCssUrl": "https://raw.githubusercontent.com/Goblinzzzzzz/review-assistant-release/refs/heads/main/styles.css",
-  "manifestUrl": "https://raw.githubusercontent.com/Goblinzzzzzz/review-assistant-release/refs/heads/main/manifest.json"
+  "mainJsUrl": "https://raw.githubusercontent.com/Goblinzzzzzz/review-assistant-release/e01d9e0da5a0a0907c45b5ddcdf84e86937d279f/main.js",
+  "stylesCssUrl": "https://raw.githubusercontent.com/Goblinzzzzzz/review-assistant-release/e01d9e0da5a0a0907c45b5ddcdf84e86937d279f/styles.css",
+  "manifestUrl": "https://raw.githubusercontent.com/Goblinzzzzzz/review-assistant-release/e01d9e0da5a0a0907c45b5ddcdf84e86937d279f/manifest.json"
 }
