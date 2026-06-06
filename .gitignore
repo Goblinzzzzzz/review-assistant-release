@@ -3,3 +3,4 @@ data.json
 *.tmp
 *.download
 .DS_Store
+*.bak-*

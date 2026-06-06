@@ -71,13 +71,7 @@ var defaultScores = dimensions.reduce((acc, item) => {
   acc[item.key] = { score: Math.round(item.weight * 0.8), comment: "" };
   return acc;
 }, {});
-var defaultUsers = [
-  { id: "1", name: "\u8C22\u8F89", role: "\u8D44\u7BA1\u603B\u76D1", defaultMetrics: ["\u5728\u7BA1\u51C0\u589E", "\u9996\u51FA\u62DB\u79DF\u6210\u529F\u7387", "\u4E8C\u51FA\u62DB\u79DF\u6210\u529F\u7387", "\u7EFC\u5408\u9884\u552E\u7387"] },
-  { id: "2", name: "\u90D1\u6D0B", role: "\u8D44\u7BA1\u603B\u76D1", defaultMetrics: ["\u5728\u7BA1\u51C0\u589E", "\u9996\u51FA\u62DB\u79DF\u6210\u529F\u7387", "\u4E8C\u51FA\u62DB\u79DF\u6210\u529F\u7387", "\u7EFC\u5408\u9884\u552E\u7387"] },
-  { id: "3", name: "\u5F6D\u4F73\u4E3A", role: "\u8D44\u7BA1\u603B\u76D1", defaultMetrics: ["\u5728\u7BA1\u51C0\u589E", "\u9996\u51FA\u62DB\u79DF\u6210\u529F\u7387", "\u4E8C\u51FA\u62DB\u79DF\u6210\u529F\u7387", "\u7EFC\u5408\u9884\u552E\u7387"] },
-  { id: "4", name: "\u5F20\u5E05", role: "\u5BA2\u6237\u603B\u76D1", defaultMetrics: ["\u623F", "\u5BA2", "\u5E26", "\u5BA2\u7ECF\u51FA\u623F\u5360\u6BD4"] },
-  { id: "5", name: "\u9F9A\u5FB7\u76F8", role: "\u79DF\u52A1\u603B\u76D1", defaultMetrics: ["\u4EA4\u623F\u7C7B\u8D1F\u5411\u54A8\u8BE2\u7387", "\u4EA4\u623F\u53CA\u65F6\u7387", "\u79DF\u5BA2\u6EE1\u610F\u5EA6"] }
-];
+var defaultUsers = [];
 var dimensionKeys = dimensions.map((item) => item.key);
 function getWeekNumber(date) {
   const start = new Date(date.getFullYear(), 0, 1);
@@ -293,7 +287,9 @@ var DEFAULT_SETTINGS = {
   questionStyle: "sharp",
   autoTranscribe: true,
   language: "zh",
-  updateManifestUrl: REVIEW_ASSISTANT_UPDATE_MANIFEST_URL
+  updateManifestUrl: REVIEW_ASSISTANT_UPDATE_MANIFEST_URL,
+  autoCheckUpdates: true,
+  lastUpdateCheckAt: ""
 };
 var SettingsManager = class {
   constructor(initialSettings, saveCallback) {
@@ -3706,6 +3702,9 @@ var ReviewAssistantSettingTab = class extends import_obsidian2.PluginSettingTab 
         }, "\u65B0\u589E\u8FF0\u804C\u4EBA").open();
       })
     );
+    if (users.length === 0) {
+      usersContainer.createDiv({ cls: "review-settings-empty", text: "\u5C1A\u672A\u914D\u7F6E\u8FF0\u804C\u4EBA\u3002\u9996\u6B21\u4F7F\u7528\u65F6\uFF0C\u8BF7\u5148\u6309\u57CE\u5E02\u6DFB\u52A0\u672C\u5730\u8FF0\u804C\u4EBA\u548C\u5C97\u4F4D\u3002" });
+    }
     users.forEach((user) => {
       new import_obsidian2.Setting(usersContainer).setName(`${user.name}`).setDesc(`${user.role}`).addButton(
         (btn) => btn.setIcon("pencil").setTooltip("编辑").onClick(() => {
@@ -3760,6 +3759,11 @@ var ReviewAssistantSettingTab = class extends import_obsidian2.PluginSettingTab 
     new import_obsidian2.Setting(aboutCard).setName("在线升级清单 URL").setDesc("默认使用 GitHub 更新源。升级清单 JSON 需包含 version、mainJsUrl、stylesCssUrl，可选 manifestUrl、notes。").addText(
       (text) => text.setPlaceholder(REVIEW_ASSISTANT_UPDATE_MANIFEST_URL).setValue(settings.get("updateManifestUrl") || REVIEW_ASSISTANT_UPDATE_MANIFEST_URL).onChange(async (value) => {
         await settings.set("updateManifestUrl", value.trim() || REVIEW_ASSISTANT_UPDATE_MANIFEST_URL);
+      })
+    );
+    new import_obsidian2.Setting(aboutCard).setName("自动检查更新").setDesc("插件启动后每天最多检查一次；发现新版本时只提醒用户，不会自动下载安装。").addToggle(
+      (toggle) => toggle.setValue(settings.get("autoCheckUpdates") !== false).onChange(async (value) => {
+        await settings.set("autoCheckUpdates", value);
       })
     );
     new import_obsidian2.Setting(aboutCard).setName("在线升级").setDesc("检查远端版本；安装前会备份当前 main.js、styles.css 和 manifest.json。").addButton(
@@ -3908,6 +3912,11 @@ var ReviewPanelView = class extends import_obsidian3.ItemView {
       return;
     }
     this.renderHeader(containerEl);
+    if (this.sessionItems.length === 0) {
+      this.renderNoUsers(containerEl);
+      this.renderFooter(containerEl);
+      return;
+    }
     this.renderPeopleStrip(containerEl);
     this.renderBody(containerEl);
     this.renderInput(containerEl);
@@ -3952,6 +3961,22 @@ var ReviewPanelView = class extends import_obsidian3.ItemView {
         settings.addEventListener("click", () => {
           this.app.setting.open();
           this.app.setting.openTabById("review-assistant");
+        });
+      });
+    });
+  }
+  renderNoUsers(container) {
+    container.createDiv({ cls: "review-main" }, (main) => {
+      main.createDiv({ cls: "review-empty-small" }, (empty) => {
+        empty.createDiv({ cls: "review-empty-icon", text: "\u8FF0" });
+        empty.createDiv({ cls: "review-empty-title", text: "\u5148\u6DFB\u52A0\u8FF0\u804C\u4EBA" });
+        empty.createDiv({ cls: "review-empty-desc", text: "\u9996\u6B21\u4F7F\u7528\u65F6\u9700\u8981\u7531\u5404\u57CE\u5E02\u81EA\u884C\u914D\u7F6E\u8FF0\u804C\u4EBA\u3001\u5C97\u4F4D\u548C\u5173\u6CE8\u6307\u6807\u3002" });
+        empty.createDiv({ cls: "review-empty-actions" }, (actions) => {
+          const settings = actions.createEl("button", { cls: "review-primary-btn", text: "\u53BB\u914D\u7F6E\u8FF0\u804C\u4EBA" });
+          settings.addEventListener("click", () => {
+            this.app.setting.open();
+            this.app.setting.openTabById("review-assistant");
+          });
         });
       });
     });
@@ -4718,6 +4743,7 @@ var ReviewAssistantPlugin = class extends import_obsidian4.Plugin {
     this.registerCommands();
     this.addSettingTab(new ReviewAssistantSettingTab(this.app, this));
     await this.dataService.initializeStructure();
+    this.scheduleAutomaticUpdateCheck();
     console.log("\u8FF0\u804C\u52A9\u624B\u63D2\u4EF6\u52A0\u8F7D\u5B8C\u6210");
   }
   onunload() {
@@ -4763,8 +4789,39 @@ var ReviewAssistantPlugin = class extends import_obsidian4.Plugin {
       }
       return { hasUpdate, manifest };
     } catch (error) {
-      new import_obsidian4.Notice(`\u68C0\u67E5\u66F4\u65B0\u5931\u8D25\uFF1A${error instanceof Error ? error.message : "\u672A\u77E5\u9519\u8BEF"}`);
+      if (showNotice) {
+        new import_obsidian4.Notice(`\u68C0\u67E5\u66F4\u65B0\u5931\u8D25\uFF1A${error instanceof Error ? error.message : "\u672A\u77E5\u9519\u8BEF"}`);
+      }
       return { hasUpdate: false, manifest: null };
+    }
+  }
+  scheduleAutomaticUpdateCheck() {
+    if (this.settingsManager.get("autoCheckUpdates") === false) {
+      return;
+    }
+    const timeoutId = window.setTimeout(() => {
+      this.checkAutomaticUpdate().catch((error) => {
+        console.error("\u8FF0\u804C\u52A9\u624B\u81EA\u52A8\u68C0\u67E5\u66F4\u65B0\u5931\u8D25", error);
+      });
+    }, 3e3);
+    this.register(() => window.clearTimeout(timeoutId));
+  }
+  async checkAutomaticUpdate() {
+    if (this.settingsManager.get("autoCheckUpdates") === false) {
+      return;
+    }
+    const today = (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
+    if (this.settingsManager.get("lastUpdateCheckAt") === today) {
+      return;
+    }
+    const { hasUpdate, manifest } = await this.checkOnlineUpdate(false);
+    if (manifest) {
+      await this.settingsManager.set("lastUpdateCheckAt", today);
+    }
+    if (hasUpdate && manifest) {
+      const currentVersion = this.manifest.version || "0.0.0";
+      const notes = manifest.notes ? `\n${manifest.notes}` : "";
+      new import_obsidian4.Notice(`\u8FF0\u804C\u52A9\u624B\u53D1\u73B0\u65B0\u7248\u672C\uFF1A${manifest.version}\uFF08\u5F53\u524D ${currentVersion}\uFF09\u3002\u8BF7\u5230\u63D2\u4EF6\u8BBE\u7F6E > \u5173\u4E8E > \u5728\u7EBF\u5347\u7EA7\u4E2D\u5B89\u88C5\u3002${notes}`, 12e3);
     }
   }
   async installOnlineUpdate() {
