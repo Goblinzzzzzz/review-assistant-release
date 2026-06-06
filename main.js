@@ -184,6 +184,36 @@ function buildEvaluationRadarSvg(evaluation) {
   </g>
 </svg>`;
 }
+function normalizeMomaApiBaseUrl(baseUrl) {
+  const trimmed = (baseUrl || MOMA_API_BASE_URL).replace(/\/+$/u, "");
+  return trimmed.endsWith("/api") ? trimmed : `${trimmed}/api`;
+}
+async function validateMomaApiKey(token, baseUrl = MOMA_API_BASE_URL) {
+  const trimmed = (token || "").trim();
+  if (!trimmed)
+    return false;
+  const fetchImpl = typeof globalThis !== "undefined" ? globalThis.fetch : void 0;
+  if (!fetchImpl)
+    return false;
+  try {
+    const response = await fetchImpl(`${normalizeMomaApiBaseUrl(baseUrl)}/token/verify`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ token: trimmed })
+    });
+    if (!response.ok)
+      return false;
+    const payload = await response.json();
+    return !!(payload == null ? void 0 : payload.data) && payload.data.valid === true;
+  } catch (e) {
+    return false;
+  }
+}
+function openMomaManageKeys() {
+  if (typeof window !== "undefined" && window.open) {
+    window.open(MOMA_MANAGE_KEYS_URL);
+  }
+}
 
 // src/core/SettingsManager.ts
 var home = process.env.HOME || "";
@@ -197,16 +227,23 @@ var DEFAULT_WHISPER_MODEL_KEY = "large-v3-turbo";
 var DEFAULT_WHISPER_MODEL_FILE = "ggml-large-v3-turbo.bin";
 var DEFAULT_WHISPER_MODEL_PATH = `${home}/.whisper-models/${DEFAULT_WHISPER_MODEL_FILE}`;
 var BUNDLED_WHISPER_MODEL_PATHS = WHISPER_MODEL_PRESETS.map((preset) => `${home}/.whisper-models/${preset.fileName}`);
+var MOMA_API_BASE_URL = "https://next.ke.com/ob/api";
+var MOMA_MANAGE_KEYS_URL = "https://moma.ke.com/manage-keys";
+var MOMA_DEFAULT_MODEL = "claude-4.6-sonnet";
+var ENABLE_LOCAL_VOICE_PLAYBACK = false;
 function isBundledWhisperModelPath(modelPath) {
   if (!modelPath)
     return true;
   return BUNDLED_WHISPER_MODEL_PATHS.includes(modelPath);
 }
+function isLegacyBuiltInAiBaseUrl(baseUrl) {
+  return !baseUrl || ["https://api.anthropic.com", "https://prd-assistant-backend.ke.com/api"].includes(baseUrl);
+}
 var DEFAULT_SETTINGS = {
   // AI配置
   claudeApiKey: "",
-  claudeApiBaseUrl: "https://api.anthropic.com",
-  claudeModel: "claude-sonnet-4-6",
+  claudeApiBaseUrl: MOMA_API_BASE_URL,
+  claudeModel: MOMA_DEFAULT_MODEL,
   // 语音识别配置
   whisperApiKey: "",
   whisperApiType: "local",
@@ -228,6 +265,10 @@ var SettingsManager = class {
     this.settings = { ...DEFAULT_SETTINGS, ...initialSettings };
     if (!initialSettings.whisperModelPath || isBundledWhisperModelPath(initialSettings.whisperModelPath)) {
       this.settings.whisperModelPath = DEFAULT_WHISPER_MODEL_PATH;
+    }
+    if (isLegacyBuiltInAiBaseUrl(initialSettings.claudeApiBaseUrl)) {
+      this.settings.claudeApiBaseUrl = MOMA_API_BASE_URL;
+      this.settings.claudeModel = MOMA_DEFAULT_MODEL;
     }
     this.saveCallback = saveCallback;
   }
@@ -2590,7 +2631,7 @@ ${conversationText || "\u65E0\u5BF9\u8BDD\u8BB0\u5F55"}
 var AIService = class {
   constructor() {
     this.client = null;
-    this.model = "claude-sonnet-4-6";
+    this.model = MOMA_DEFAULT_MODEL;
     this.questionStyle = "sharp";
   }
   setApiKey(apiKey, baseURL, model) {
@@ -2600,7 +2641,9 @@ var AIService = class {
     }
     this.client = new sdk_default({
       apiKey: apiKey.trim(),
-      baseURL: baseURL || "https://api.anthropic.com",
+      authToken: apiKey.trim(),
+      baseURL: baseURL || MOMA_API_BASE_URL,
+      defaultHeaders: { Authorization: `Bearer ${apiKey.trim()}` },
       dangerouslyAllowBrowser: true
     });
     if (model) {
@@ -3506,45 +3549,45 @@ var ReviewAssistantSettingTab = class extends import_obsidian2.PluginSettingTab 
     return card.createDiv({ cls: "review-settings-card-body" });
   }
   async renderModelSettings(container, settings) {
-    const aiCard = this.createSettingsCard(container, "AI 配置", "配置提问、追问和评价所使用的 AI 服务。");
-    new import_obsidian2.Setting(aiCard).setName("API Key").setDesc("AI服务的API密钥").addText(
-      (text) => text.setPlaceholder("sk-xxx").setValue(settings.get("claudeApiKey")).onChange(async (value) => {
-        await settings.set("claudeApiKey", value);
-        this.updateAIService();
-      })
+    const aiCard = this.createSettingsCard(container, "AI 配置", "使用与 Moma 相同的 API Key、网关和默认模型。");
+    const hasKey = settings.get("claudeApiKey").trim().length > 0;
+    new import_obsidian2.Setting(aiCard).setName(hasKey ? "已配置 Moma API Key" : "未配置 Moma API Key").setDesc(hasKey ? "当前已保存 API Key。可在此更新或清除。" : "请先申请并填写 Moma API Key，保存后即可使用 AI 提问、追问和评价。").addButton(
+      (btn) => btn.setButtonText("申请/管理 Key").onClick(() => openMomaManageKeys())
     );
-    new import_obsidian2.Setting(aiCard).setName("API 地址").setDesc("AI服务的API地址（可使用公司内部网关）").addText(
-      (text) => text.setPlaceholder("https://api.anthropic.com").setValue(settings.get("claudeApiBaseUrl")).onChange(async (value) => {
-        await settings.set("claudeApiBaseUrl", value);
+    new import_obsidian2.Setting(aiCard).setName("Moma API Key").setDesc("与 Moma 插件使用同一套 Key。").addText(
+      (text) => {
+        text.inputEl.type = "password";
+        text.setPlaceholder("粘贴 Moma API Key").setValue(settings.get("claudeApiKey")).onChange(async (value) => {
+          await settings.set("claudeApiKey", value.trim());
+          this.updateAIService();
+        });
+      }
+    ).addButton(
+      (btn) => btn.setButtonText("验证并保存").setCta().onClick(async () => {
+        const ok = await validateMomaApiKey(settings.get("claudeApiKey"), MOMA_API_BASE_URL);
+        if (!ok) {
+          new import_obsidian2.Notice("Moma API Key 验证失败，请检查 Key 或网络");
+          return;
+        }
+        await settings.update({
+          claudeApiBaseUrl: MOMA_API_BASE_URL,
+          claudeModel: MOMA_DEFAULT_MODEL
+        });
         this.updateAIService();
-      })
-    );
-    new import_obsidian2.Setting(aiCard).setName("模型名称").setDesc("使用的AI模型").addText(
-      (text) => text.setPlaceholder("claude-sonnet-4-6").setValue(settings.get("claudeModel")).onChange(async (value) => {
-        await settings.set("claudeModel", value);
-        this.plugin.getAIService().setModel(value);
+        this.display();
+        new import_obsidian2.Notice("Moma API Key 验证通过，AI 已就绪");
       })
     );
     const presetsDiv = aiCard.createDiv("presets-container");
-    new import_obsidian2.Setting(presetsDiv).setName("常用配置").setDesc("快速切换 AI 服务地址和模型").addButton(
-      (btn) => btn.setButtonText("官方Claude").onClick(async () => {
+    new import_obsidian2.Setting(presetsDiv).setName("当前模型").setDesc(`Moma 网关：${MOMA_DEFAULT_MODEL}`).addButton(
+      (btn) => btn.setButtonText("恢复默认").onClick(async () => {
         await settings.update({
-          claudeApiBaseUrl: "https://api.anthropic.com",
-          claudeModel: "claude-sonnet-4-6"
+          claudeApiBaseUrl: MOMA_API_BASE_URL,
+          claudeModel: MOMA_DEFAULT_MODEL
         });
         this.updateAIService();
         this.display();
-        new import_obsidian2.Notice("已切换到官方Claude");
-      })
-    ).addButton(
-      (btn) => btn.setButtonText("公司网关").onClick(async () => {
-        await settings.update({
-          claudeApiBaseUrl: "https://prd-assistant-backend.ke.com/api",
-          claudeModel: "claude-4.6-sonnet"
-        });
-        this.updateAIService();
-        this.display();
-        new import_obsidian2.Notice("已切换到公司内部网关");
+        new import_obsidian2.Notice("已切换到 Moma 默认配置");
       })
     );
 
@@ -3822,12 +3865,42 @@ var ReviewPanelView = class extends import_obsidian3.ItemView {
   renderNotConfigured(container) {
     container.createDiv({ cls: "review-empty" }, (empty) => {
       empty.createDiv({ cls: "review-empty-icon", text: "\u26A0\uFE0F" });
-      empty.createDiv({ cls: "review-empty-title", text: "\u9700\u8981\u914D\u7F6E API" });
-      empty.createDiv({ cls: "review-empty-desc", text: "\u8BF7\u5148\u5728\u8BBE\u7F6E\u4E2D\u914D\u7F6E\u516C\u53F8\u5185\u90E8\u7F51\u5173\u6216 Claude API Key" });
-      const btn = empty.createEl("button", { cls: "review-primary-btn", text: "\u6253\u5F00\u8BBE\u7F6E" });
-      btn.addEventListener("click", () => {
-        this.app.setting.open();
-        this.app.setting.openTabById("review-assistant");
+      empty.createDiv({ cls: "review-empty-title", text: "\u914D\u7F6E Moma API Key" });
+      empty.createDiv({ cls: "review-empty-desc", text: "\u8FF0\u804C\u52A9\u624B\u4F7F\u7528\u4E0E Moma \u76F8\u540C\u7684 AI \u7F51\u5173\u548C Key\u3002\u8BF7\u5148\u5B8C\u6210\u8BA4\u8BC1\u3002" });
+      let pendingKey = "";
+      const input = empty.createEl("input", {
+        cls: "review-api-key-input",
+        type: "password",
+        attr: { placeholder: "\u7C98\u8D34 Moma API Key" }
+      });
+      input.addEventListener("input", () => {
+        pendingKey = input.value.trim();
+      });
+      empty.createDiv({ cls: "review-empty-actions" }, (actions) => {
+        const save = actions.createEl("button", { cls: "review-primary-btn", text: "\u9A8C\u8BC1\u5E76\u5F00\u59CB" });
+        save.addEventListener("click", async () => {
+          const ok = await validateMomaApiKey(pendingKey, MOMA_API_BASE_URL);
+          if (!ok) {
+            new import_obsidian3.Notice("Moma API Key 验证失败，请检查 Key 或网络");
+            return;
+          }
+          await this.plugin.getSettingsManager().update({
+            claudeApiKey: pendingKey,
+            claudeApiBaseUrl: MOMA_API_BASE_URL,
+            claudeModel: MOMA_DEFAULT_MODEL
+          });
+          this.plugin.getAIService().setApiKey(pendingKey, MOMA_API_BASE_URL, MOMA_DEFAULT_MODEL);
+          new import_obsidian3.Notice("Moma API Key 验证通过，AI 已就绪");
+          await this.initializeSession();
+          this.render();
+        });
+        const manage = actions.createEl("button", { cls: "review-secondary-btn", text: "\u7533\u8BF7/\u7BA1\u7406 Key" });
+        manage.addEventListener("click", () => openMomaManageKeys());
+        const settings = actions.createEl("button", { cls: "review-ghost-btn", text: "\u6253\u5F00\u8BBE\u7F6E" });
+        settings.addEventListener("click", () => {
+          this.app.setting.open();
+          this.app.setting.openTabById("review-assistant");
+        });
       });
     });
   }
@@ -3980,7 +4053,7 @@ var ReviewPanelView = class extends import_obsidian3.ItemView {
       row.createDiv({ cls: "review-message-content" }, (content) => {
         content.createDiv({ cls: "review-message-meta" }, (meta) => {
           meta.createSpan({ text: message.role === "assistant" ? message.type === "evaluation-summary" ? "AI\u603B\u7ED3" : "AI\u8FFD\u95EE" : "\u8FF0\u804C\u56DE\u7B54" });
-          if (message.role === "assistant") {
+          if (message.role === "assistant" && ENABLE_LOCAL_VOICE_PLAYBACK) {
             const speak = meta.createEl("button", { cls: "review-speak-btn", text: "\u64AD\u653E" });
             speak.title = "\u4F7F\u7528\u672C\u5730\u7CFB\u7EDF\u8BED\u97F3\u64AD\u653E\uFF0C\u4E0D\u4EA7\u751F\u989D\u5916\u8D39\u7528";
             speak.addEventListener("click", () => this.speakMessage(message.content));
