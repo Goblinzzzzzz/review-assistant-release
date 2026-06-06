@@ -3646,9 +3646,15 @@ var ReviewPanelView = class extends import_obsidian3.ItemView {
     await this.initializeSession();
     this.render();
   }
-  async initializeSession() {
+  resetSessionUsers() {
     const users = this.plugin.getSettingsManager().get("users");
     this.sessionItems = users.map((user) => ({ user, status: "not-started" }));
+    if (this.activeIndex >= this.sessionItems.length) {
+      this.activeIndex = 0;
+    }
+  }
+  async initializeSession() {
+    this.resetSessionUsers();
     const recentFiles = await this.plugin.getDataService().getRecentMaterials(50);
     let firstReadyIndex = -1;
     for (const [index, item] of this.sessionItems.entries()) {
@@ -3670,6 +3676,9 @@ var ReviewPanelView = class extends import_obsidian3.ItemView {
     }
   }
   async loadActiveFile(filePath) {
+    if (this.sessionItems.length === 0) {
+      this.resetSessionUsers();
+    }
     const file = this.app.vault.getAbstractFileByPath(filePath);
     if (!(file instanceof import_obsidian3.TFile))
       return;
@@ -3678,6 +3687,8 @@ var ReviewPanelView = class extends import_obsidian3.ItemView {
       return;
     const matchedIndex = this.sessionItems.findIndex((item) => item.user.name === material.userName || file.basename.includes(item.user.name));
     const index = matchedIndex >= 0 ? matchedIndex : this.activeIndex;
+    if (!this.sessionItems[index])
+      return;
     this.sessionItems[index].file = file;
     this.sessionItems[index].material = material;
     this.sessionItems[index].status = "active";
@@ -3838,10 +3849,16 @@ var ReviewPanelView = class extends import_obsidian3.ItemView {
         main.createDiv({ cls: "review-material-name", text: item.file.basename });
         main.createDiv({ cls: "review-material-path", text: item.file.path });
       });
-      const open = chip.createEl("button", { cls: "review-link-btn", text: "\u6253\u5F00" });
-      open.addEventListener("click", async () => {
-        const leaf = this.app.workspace.getLeaf("tab");
-        await leaf.openFile(item.file);
+      chip.createDiv({ cls: "review-material-actions" }, (actions) => {
+        const open = actions.createEl("button", { cls: "review-link-btn", text: "\u6253\u5F00" });
+        open.addEventListener("click", async () => {
+          const leaf = this.app.workspace.getLeaf("tab");
+          await leaf.openFile(item.file);
+        });
+        const change = actions.createEl("button", { cls: "review-link-btn", text: "\u66F4\u6362\u6750\u6599" });
+        change.addEventListener("click", () => this.openFilePicker());
+        const create = actions.createEl("button", { cls: "review-link-btn", text: "\u65B0\u5EFA\u6750\u6599" });
+        create.addEventListener("click", () => this.plugin.createNewMaterial(item.user, true));
       });
     });
   }
@@ -4467,7 +4484,7 @@ var ReviewAssistantPlugin = class extends import_obsidian4.Plugin {
   /**
    * 激活视图（右侧边栏）
    */
-  async activateView() {
+  async activateView(filePath) {
     const { workspace } = this.app;
     let leaf = workspace.getLeavesOfType(VIEW_TYPE_REVIEW_PANEL)[0];
     if (!leaf) {
@@ -4482,7 +4499,11 @@ var ReviewAssistantPlugin = class extends import_obsidian4.Plugin {
     }
     if (leaf) {
       workspace.revealLeaf(leaf);
-      leaf.view.onOpen();
+      if (filePath && leaf.view instanceof ReviewPanelView) {
+        await leaf.view.loadActiveFile(filePath);
+      } else {
+        await leaf.view.onOpen();
+      }
     }
   }
   /**
@@ -4530,8 +4551,7 @@ var ReviewAssistantPlugin = class extends import_obsidian4.Plugin {
       const leaf = this.app.workspace.getLeaf("tab");
       await leaf.openFile(file);
       new import_obsidian4.Notice(`\u5DF2\u521B\u5EFA\u8FF0\u804C\u6750\u6599\uFF1A${file.name}`);
-      await this.activateView();
-      eventBus.emit("review:started", { filePath: file.path });
+      await this.activateView(file.path);
     } catch (error) {
       new import_obsidian4.Notice(`\u521B\u5EFA\u5931\u8D25\uFF1A${error instanceof Error ? error.message : "\u672A\u77E5\u9519\u8BEF"}`);
     }
@@ -4545,8 +4565,7 @@ var ReviewAssistantPlugin = class extends import_obsidian4.Plugin {
       new import_obsidian4.Notice("\u8BF7\u5148\u6253\u5F00\u4E00\u4E2A\u8FF0\u804C\u6750\u6599\u6587\u4EF6");
       return;
     }
-    await this.activateView();
-    eventBus.emit("review:started", { filePath: activeFile.path });
+    await this.activateView(activeFile.path);
   }
   /**
    * 生成评价
