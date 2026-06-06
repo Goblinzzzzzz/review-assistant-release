@@ -102,6 +102,34 @@
   font-size: var(--font-ui-small);
 }
 
+.review-settings .review-model-note,
+.review-settings .review-settings-empty {
+  margin: 8px 0;
+  padding: 10px 12px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 8px;
+  background: var(--background-primary);
+  color: var(--text-muted);
+  font-size: var(--font-ui-small);
+  line-height: 1.5;
+}
+
+.review-settings .review-evaluation-dimension {
+  margin: 10px 0;
+  padding: 8px 10px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 8px;
+  background: var(--background-primary);
+}
+
+.review-settings .review-evaluation-dimension + .review-evaluation-dimension {
+  margin-top: 12px;
+}
+
+.review-settings .review-evaluation-dimension textarea {
+  min-height: 84px;
+}
+
 .review-workbench {
   --review-brand: #D97757;
   --review-brand-rgb: 217, 119, 87;
