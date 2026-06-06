@@ -67,8 +67,97 @@ var dimensions = [
     description: "\u8BC4\u4EF7\u5BA2\u6237\u6210\u6548\u3001\u7EC4\u7EC7\u6210\u6548\u3001\u4E2A\u4EBA\u6210\u6548\u3001\u884C\u4E3A\u4EE3\u4EF7\u548C\u7EE9\u6548\u6BD4\u503C\u3002"
   }
 ];
+var DEFAULT_EVALUATION_CRITERIA = {
+  indicatorQuality: ["来源依据：指标是否基于业务分析", "战略关联：是否与组织目标相关", "层级结构：是否有组织/流程/行为指标", "可量化性：能否量化跟踪", "前置性：是否包含前置性指标"],
+  processManagement: ["关键价值链：是否还原业务逻辑", "因果关系：是否说明动作如何影响结果", "前置指标：是否找到可管理的前置指标", "数据思维：是否做到定量分析", "异常洞察：是否识别关键异常"],
+  technicalControl: ["说清楚：数据/要求/反馈是否清晰", "干简单：资源/流程/工具是否到位", "奖到位：激励是否匹配", "判断：措施是人控还是技控"],
+  pdcaClosure: ["P计划：目标是否有效传递", "D辅导：是否提供过程辅导", "C检查：是否有检查节点", "A改进：是否完成复盘改进"],
+  effectCostRatio: ["客户成效：客户价值是否提升", "组织成效：收入/利润/效率是否改善", "个人成效：员工能力是否成长", "行为代价：投入是否合理"]
+};
+var DEFAULT_EVALUATION_GRADES = [
+  { grade: "A", minScore: 90, description: "优秀：指标、过程、技控和闭环都较完整，可复制推广" },
+  { grade: "B", minScore: 80, description: "良好：整体达标，但仍有少量关键环节需要补强" },
+  { grade: "C", minScore: 70, description: "一般：有基础动作，但指标、过程或闭环存在明显短板" },
+  { grade: "D", minScore: 60, description: "待改进：核心逻辑不够清晰，执行和闭环不足" },
+  { grade: "E", minScore: 0, description: "不合格：关键指标、过程管理和改进动作严重缺失" }
+];
+function createDefaultEvaluationModel() {
+  return {
+    dimensions: dimensions.map((item) => ({
+      key: item.key,
+      name: item.name,
+      weight: item.weight,
+      question: item.question,
+      description: item.description,
+      criteria: [...(DEFAULT_EVALUATION_CRITERIA[item.key] || [])]
+    })),
+    grades: DEFAULT_EVALUATION_GRADES.map((item) => ({ ...item }))
+  };
+}
+var DEFAULT_EVALUATION_MODEL = createDefaultEvaluationModel();
+function cloneEvaluationModel(model) {
+  return {
+    dimensions: (model == null ? void 0 : model.dimensions || []).map((item) => ({
+      key: item.key,
+      name: item.name,
+      weight: Number(item.weight) || 0,
+      question: item.question || "",
+      description: item.description || "",
+      criteria: Array.isArray(item.criteria) ? [...item.criteria] : []
+    })),
+    grades: (model == null ? void 0 : model.grades || []).map((item) => ({
+      grade: String(item.grade || "").trim() || "C",
+      minScore: Number(item.minScore) || 0,
+      description: item.description || ""
+    }))
+  };
+}
+function normalizeEvaluationModel(model) {
+  const incoming = model || {};
+  const incomingDimensions = Array.isArray(incoming.dimensions) ? incoming.dimensions : [];
+  const incomingGrades = Array.isArray(incoming.grades) ? incoming.grades : [];
+  const normalizedDimensions = DEFAULT_EVALUATION_MODEL.dimensions.map((defaultItem) => {
+    const existing = incomingDimensions.find((item) => item && item.key === defaultItem.key) || {};
+    return {
+      ...defaultItem,
+      ...existing,
+      weight: Math.max(0, Number(existing.weight ?? defaultItem.weight) || defaultItem.weight),
+      criteria: Array.isArray(existing.criteria) && existing.criteria.length ? existing.criteria.map((item) => String(item).trim()).filter(Boolean) : [...defaultItem.criteria]
+    };
+  });
+  const normalizedGrades = (incomingGrades.length ? incomingGrades : DEFAULT_EVALUATION_MODEL.grades).map((item) => ({
+    grade: String(item.grade || "").trim() || "C",
+    minScore: Math.max(0, Number(item.minScore) || 0),
+    description: item.description || ""
+  })).sort((a, b) => b.minScore - a.minScore);
+  return {
+    dimensions: normalizedDimensions,
+    grades: normalizedGrades.length ? normalizedGrades : cloneEvaluationModel(DEFAULT_EVALUATION_MODEL).grades
+  };
+}
+function getEvaluationMaxScore(model) {
+  return normalizeEvaluationModel(model).dimensions.reduce((sum, item) => sum + (Number(item.weight) || 0), 0);
+}
+function getConfiguredGrade(score, model) {
+  const grades = normalizeEvaluationModel(model).grades;
+  const numericScore = Number(score) || 0;
+  const matched = grades.find((item) => numericScore >= item.minScore);
+  return (matched == null ? void 0 : matched.grade) || "C";
+}
+function buildEvaluationCriteriaPrompt(model) {
+  const normalized = normalizeEvaluationModel(model);
+  const gradeRules = normalized.grades.map((item) => `- ${item.grade}：${item.minScore}分及以上。${item.description || ""}`).join("\n");
+  const dimensionRules = normalized.dimensions.map((item, index) => `${index + 1}. ${item.name}（${item.weight}分）
+   核心问题：${item.question || "按本维度评价述职质量"}
+   评价说明：${item.description || ""}
+${(item.criteria || []).map((criterion) => `   - ${criterion}`).join("\n")}`).join("\n\n");
+  return `${dimensionRules}
+
+等级规则：
+${gradeRules}`;
+}
 var defaultScores = dimensions.reduce((acc, item) => {
-  acc[item.key] = { score: Math.round(item.weight * 0.8), comment: "" };
+  acc[item.key] = { score: Math.round(item.weight * 0.8), maxScore: item.weight, comment: "" };
   return acc;
 }, {});
 var defaultUsers = [];
@@ -87,22 +176,23 @@ function sanitizeFileName(name) {
 }
 function getEvaluationDimensionItems(evaluation) {
   return [
-    { key: "indicatorQuality", label: "\u6307\u6807\u8D28\u91CF", score: evaluation.dimensions.indicatorQuality.score, max: 20, comment: evaluation.dimensions.indicatorQuality.comment },
-    { key: "processManagement", label: "\u8FC7\u7A0B\u7BA1\u7406", score: evaluation.dimensions.processManagement.score, max: 25, comment: evaluation.dimensions.processManagement.comment },
-    { key: "technicalControl", label: "\u6280\u63A7\u80FD\u529B", score: evaluation.dimensions.technicalControl.score, max: 25, comment: evaluation.dimensions.technicalControl.comment },
-    { key: "pdcaClosure", label: "\u7EE9\u6548\u95ED\u73AF", score: evaluation.dimensions.pdcaClosure.score, max: 20, comment: evaluation.dimensions.pdcaClosure.comment },
-    { key: "effectCostRatio", label: "\u6210\u6548\u4EE3\u4EF7", score: evaluation.dimensions.effectCostRatio.score, max: 10, comment: evaluation.dimensions.effectCostRatio.comment }
+    { key: "indicatorQuality", label: "\u6307\u6807\u8D28\u91CF", score: evaluation.dimensions.indicatorQuality.score, max: evaluation.dimensions.indicatorQuality.maxScore || 20, comment: evaluation.dimensions.indicatorQuality.comment },
+    { key: "processManagement", label: "\u8FC7\u7A0B\u7BA1\u7406", score: evaluation.dimensions.processManagement.score, max: evaluation.dimensions.processManagement.maxScore || 25, comment: evaluation.dimensions.processManagement.comment },
+    { key: "technicalControl", label: "\u6280\u63A7\u80FD\u529B", score: evaluation.dimensions.technicalControl.score, max: evaluation.dimensions.technicalControl.maxScore || 25, comment: evaluation.dimensions.technicalControl.comment },
+    { key: "pdcaClosure", label: "\u7EE9\u6548\u95ED\u73AF", score: evaluation.dimensions.pdcaClosure.score, max: evaluation.dimensions.pdcaClosure.maxScore || 20, comment: evaluation.dimensions.pdcaClosure.comment },
+    { key: "effectCostRatio", label: "\u6210\u6548\u4EE3\u4EF7", score: evaluation.dimensions.effectCostRatio.score, max: evaluation.dimensions.effectCostRatio.maxScore || 10, comment: evaluation.dimensions.effectCostRatio.comment }
   ];
 }
 function buildEvaluationSummaryText(evaluation) {
   const dimensions2 = getEvaluationDimensionItems(evaluation);
+  const maxScore = dimensions2.reduce((sum, item) => sum + (Number(item.max) || 0), 0) || 100;
   const weakest = [...dimensions2].sort((a, b) => a.score / a.max - b.score / b.max).slice(0, 2);
   const coreProblems = (evaluation.improvements || []).slice(0, 2).map((item) => `${item.weakness}\uFF1A${item.currentStatus || item.suggestion || "\u9700\u7EE7\u7EED\u8DDF\u8FDB"}`);
   const focusItems = [
     ...weakest.map((item) => `${item.label}\uFF08${item.score}/${item.max}\uFF09`),
     ...(evaluation.improvements || []).slice(0, 2).map((item) => item.suggestion).filter(Boolean)
   ].slice(0, 4);
-  return `\u672C\u6B21\u8FF0\u804C\u8BC4\u4EF7\u5B8C\u6210\uFF1A\u603B\u5206 ${evaluation.totalScore}/100\uFF0C\u7B49\u7EA7 ${evaluation.grade}\u3002
+  return `\u672C\u6B21\u8FF0\u804C\u8BC4\u4EF7\u5B8C\u6210\uFF1A\u603B\u5206 ${evaluation.totalScore}/${maxScore}\uFF0C\u7B49\u7EA7 ${evaluation.grade}\u3002
 
 \u6838\u5FC3\u95EE\u9898\uFF1A
 ${coreProblems.length ? coreProblems.map((item) => `- ${item}`).join("\n") : `- ${evaluation.summary || "\u6682\u65E0\u660E\u663E\u95EE\u9898\uFF0C\u4F46\u4ECD\u9700\u4FDD\u6301\u8FC7\u7A0B\u590D\u76D8\u3002"}`}
@@ -114,6 +204,7 @@ ${focusItems.length ? focusItems.map((item) => `- ${item}`).join("\n") : "- \u63
 }
 function buildEvaluationRadarSvg(evaluation) {
   const items = getEvaluationDimensionItems(evaluation);
+  const maxScore = items.reduce((sum, item) => sum + (Number(item.max) || 0), 0) || 100;
   const size = 520;
   const center = size / 2;
   const radius = 150;
@@ -163,7 +254,7 @@ function buildEvaluationRadarSvg(evaluation) {
   </defs>
   <rect x="18" y="18" width="684" height="524" rx="22" fill="url(#radarBg)" stroke="#e5e7eb"/>
   <text x="48" y="58" fill="#1f2937" font-size="22" font-weight="800">五维度能力雷达图</text>
-  <text x="48" y="84" fill="#6b7280" font-size="13">总分 ${evaluation.totalScore}/100 · 等级 ${evaluation.grade}</text>
+  <text x="48" y="84" fill="#6b7280" font-size="13">总分 ${evaluation.totalScore}/${maxScore} · 等级 ${evaluation.grade}</text>
   <g transform="translate(100, 18)" filter="url(#radarShadow)">
     <circle cx="${center}" cy="${center}" r="${radius + 34}" fill="#ffffff" opacity="0.72"/>
     ${rings}
@@ -288,6 +379,7 @@ var DEFAULT_SETTINGS = {
   questionStyle: "sharp",
   autoTranscribe: true,
   language: "zh",
+  evaluationModel: DEFAULT_EVALUATION_MODEL,
   updateManifestUrl: REVIEW_ASSISTANT_UPDATE_MANIFEST_URL,
   autoCheckUpdates: true,
   lastUpdateCheckAt: ""
@@ -306,6 +398,7 @@ var SettingsManager = class {
     if (!initialSettings.updateManifestUrl || initialSettings.updateManifestUrl === LEGACY_REVIEW_ASSISTANT_UPDATE_MANIFEST_URL) {
       this.settings.updateManifestUrl = REVIEW_ASSISTANT_UPDATE_MANIFEST_URL;
     }
+    this.settings.evaluationModel = normalizeEvaluationModel(initialSettings.evaluationModel || DEFAULT_EVALUATION_MODEL);
     this.saveCallback = saveCallback;
   }
   get(key) {
@@ -2584,8 +2677,11 @@ function getQuestionPrompt(material, style) {
 
 \u8BF7\u6839\u636E\u8FF0\u804C\u4EBA\u7684\u56DE\u7B54\u5224\u65AD\u662F\u5426\u9700\u8981\u8FFD\u95EE\u3002\u5982\u9700\u8FFD\u95EE\uFF0C\u8F93\u51FA\u8FFD\u95EE\u5185\u5BB9\uFF1B\u5982\u5DF2\u5F97\u5230\u5B9E\u8D28\u7B54\u6848\uFF0C\u8F93\u51FA"\u3010\u7ED3\u675F\u8FFD\u95EE\u3011"\u5E76\u7B80\u8FF0\u7ED3\u8BBA\u3002`;
 }
-function getEvaluationPrompt(material, conversationHistory) {
+function getEvaluationPrompt(material, conversationHistory, evaluationModel) {
   const conversationText = conversationHistory.map((m) => `${m.role === "assistant" ? "AI" : "\u8FF0\u804C\u4EBA"}\uFF1A${m.content}`).join("\n\n");
+  const normalizedModel = normalizeEvaluationModel(evaluationModel);
+  const criteriaPrompt = buildEvaluationCriteriaPrompt(normalizedModel);
+  const maxScore = getEvaluationMaxScore(normalizedModel);
   return `\u4F60\u662F\u7BA1\u7406\u8BC4\u4EF7\u4E13\u5BB6\uFF0C\u57FA\u4E8E\u300A\u8D85\u8D8A\u6307\u6807\u300B\u65B9\u6CD5\u8BBA\u8FDB\u884C\u4E94\u7EF4\u5EA6\u8BC4\u4EF7\u3002
 
 \u8FF0\u804C\u6750\u6599\uFF1A
@@ -2609,38 +2705,9 @@ function getEvaluationPrompt(material, conversationHistory) {
 ${conversationText || "\u65E0\u5BF9\u8BDD\u8BB0\u5F55"}
 
 \u8BF7\u6309\u7167\u4EE5\u4E0B\u7EF4\u5EA6\u8FDB\u884C\u8BC4\u4EF7\uFF1A
+${criteriaPrompt}
 
-1. \u6307\u6807\u8D28\u91CF\uFF0820\u5206\uFF09
-   - \u6765\u6E90\u4F9D\u636E\uFF1A\u6307\u6807\u662F\u5426\u57FA\u4E8E\u4E1A\u52A1\u5206\u6790
-   - \u6218\u7565\u5173\u8054\uFF1A\u662F\u5426\u4E0E\u7EC4\u7EC7\u76EE\u6807\u76F8\u5173
-   - \u5C42\u7EA7\u7ED3\u6784\uFF1A\u662F\u5426\u6709\u7EC4\u7EC7/\u6D41\u7A0B/\u884C\u4E3A\u6307\u6807
-   - \u53EF\u91CF\u5316\u6027\uFF1A\u80FD\u5426\u91CF\u5316\u8DDF\u8E2A
-   - \u524D\u7F6E\u6027\uFF1A\u662F\u5426\u5305\u542B\u524D\u7F6E\u6027\u6307\u6807
-
-2. \u8FC7\u7A0B\u7BA1\u7406\uFF0825\u5206\uFF09
-   - \u5173\u952E\u4EF7\u503C\u94FE\uFF1A\u662F\u5426\u8FD8\u539F\u4E1A\u52A1\u903B\u8F91
-   - \u56E0\u679C\u5173\u7CFB\uFF1A\u662F\u5426\u8BF4\u660E\u52A8\u4F5C\u5982\u4F55\u5F71\u54CD\u7ED3\u679C
-   - \u524D\u7F6E\u6307\u6807\uFF1A\u662F\u5426\u627E\u5230\u53EF\u7BA1\u7406\u7684\u524D\u7F6E\u6307\u6807
-   - \u6570\u636E\u601D\u7EF4\uFF1A\u662F\u5426\u505A\u5230\u5B9A\u91CF\u5206\u6790
-   - \u5F02\u5E38\u6D1E\u5BDF\uFF1A\u662F\u5426\u8BC6\u522B\u5173\u952E\u5F02\u5E38
-
-3. \u6280\u63A7\u80FD\u529B\uFF0825\u5206\uFF09
-   - \u8BF4\u6E05\u695A\uFF1A\u6570\u636E/\u8981\u6C42/\u53CD\u9988\u662F\u5426\u6E05\u6670
-   - \u5E72\u7B80\u5355\uFF1A\u8D44\u6E90/\u6D41\u7A0B/\u5DE5\u5177\u662F\u5426\u5230\u4F4D
-   - \u5956\u5230\u4F4D\uFF1A\u6FC0\u52B1\u662F\u5426\u5339\u914D
-   - \u5224\u65AD\uFF1A\u63AA\u65BD\u662F\u4EBA\u63A7\u8FD8\u662F\u6280\u63A7
-
-4. \u7EE9\u6548\u95ED\u73AF\uFF0820\u5206\uFF09
-   - P\u8BA1\u5212\uFF1A\u76EE\u6807\u662F\u5426\u6709\u6548\u4F20\u9012
-   - D\u8F85\u5BFC\uFF1A\u662F\u5426\u63D0\u4F9B\u8FC7\u7A0B\u8F85\u5BFC
-   - C\u68C0\u67E5\uFF1A\u662F\u5426\u6709\u68C0\u67E5\u8282\u70B9
-   - A\u6539\u8FDB\uFF1A\u662F\u5426\u5B8C\u6210\u590D\u76D8\u6539\u8FDB
-
-5. \u6210\u6548\u4EE3\u4EF7\uFF0810\u5206\uFF09
-   - \u5BA2\u6237\u6210\u6548\uFF1A\u5BA2\u6237\u4EF7\u503C\u662F\u5426\u63D0\u5347
-   - \u7EC4\u7EC7\u6210\u6548\uFF1A\u6536\u5165/\u5229\u6DA6/\u6548\u7387\u662F\u5426\u6539\u5584
-   - \u4E2A\u4EBA\u6210\u6548\uFF1A\u5458\u5DE5\u80FD\u529B\u662F\u5426\u6210\u957F
-   - \u884C\u4E3A\u4EE3\u4EF7\uFF1A\u6295\u5165\u662F\u5426\u5408\u7406
+\u8BF7\u4E25\u683C\u6309\u7167\u4E0A\u8FF0\u6743\u91CD\u7ED9\u5206\uFF0C\u603B\u5206\u6EE1\u5206\u4E3A ${maxScore} \u5206\u3002\u7B49\u7EA7\u5FC5\u987B\u6309\u4E0A\u8FF0\u7B49\u7EA7\u89C4\u5219\u5224\u5B9A\u3002
 
 \u8F93\u51FAJSON\u683C\u5F0F\uFF1A
 {
@@ -2648,11 +2715,7 @@ ${conversationText || "\u65E0\u5BF9\u8BDD\u8BB0\u5F55"}
   "grade": "C",
   "summary": "\u4E00\u53E5\u8BDD\u603B\u7ED3",
   "dimensions": {
-    "indicatorQuality": { "score": 16, "maxScore": 20, "comment": "...", "evidence": [], "gaps": [] },
-    "processManagement": { "score": 18, "maxScore": 25, "comment": "...", "evidence": [], "gaps": [] },
-    "technicalControl": { "score": 15, "maxScore": 25, "comment": "...", "evidence": [], "gaps": [] },
-    "pdcaClosure": { "score": 20, "maxScore": 20, "comment": "...", "evidence": [], "gaps": [] },
-    "effectCostRatio": { "score": 9, "maxScore": 10, "comment": "...", "evidence": [], "gaps": [] }
+${normalizedModel.dimensions.map((item) => `    "${item.key}": { "score": ${Math.round(item.weight * 0.8)}, "maxScore": ${item.weight}, "comment": "...", "evidence": [], "gaps": [] }`).join(",\n")}
   },
   "improvements": [
     { "weakness": "\u6280\u63A7\u80FD\u529B\u4E0D\u8DB3", "currentStatus": "...", "suggestion": "..." }
@@ -2669,6 +2732,7 @@ var AIService = class {
     this.client = null;
     this.model = MOMA_DEFAULT_MODEL;
     this.questionStyle = "sharp";
+    this.evaluationModel = DEFAULT_EVALUATION_MODEL;
   }
   setApiKey(apiKey, baseURL, model) {
     if (!apiKey || !apiKey.trim()) {
@@ -2694,6 +2758,9 @@ var AIService = class {
   }
   setQuestionStyle(style) {
     this.questionStyle = style || "sharp";
+  }
+  setEvaluationModel(model) {
+    this.evaluationModel = normalizeEvaluationModel(model);
   }
   isReady() {
     return this.client !== null;
@@ -2798,7 +2865,7 @@ ${material.actions.map((a) => `- [${a.priority}] ${a.action}`).join("\n") || "\u
     if (!this.client) {
       throw new Error("\u8BF7\u5148\u914D\u7F6E Claude API Key");
     }
-    const prompt = getEvaluationPrompt(material, conversationHistory);
+    const prompt = getEvaluationPrompt(material, conversationHistory, this.evaluationModel);
     const response = await this.client.messages.create({
       model: this.model,
       max_tokens: 4e3,
@@ -2813,19 +2880,28 @@ ${material.actions.map((a) => `- [${a.priority}] ${a.action}`).join("\n") || "\u
     return result;
   }
   normalizeEvaluation(result, material) {
-    const dimensions2 = { ...defaultScores, ...result.dimensions };
-    for (const key of dimensionKeys) {
+    const model = normalizeEvaluationModel(this.evaluationModel);
+    const configuredScores = model.dimensions.reduce((acc, item) => {
+      acc[item.key] = { score: Math.round(item.weight * 0.8), maxScore: item.weight, comment: "" };
+      return acc;
+    }, {});
+    const dimensions2 = { ...configuredScores, ...result.dimensions };
+    for (const item of model.dimensions) {
+      const key = item.key;
       dimensions2[key] = {
-        ...defaultScores[key],
+        ...configuredScores[key],
         ...(dimensions2[key] || {})
       };
+      dimensions2[key].maxScore = item.weight;
+      dimensions2[key].score = Math.max(0, Math.min(Number(dimensions2[key].score) || 0, item.weight));
     }
+    const totalScore = Object.values(dimensions2).reduce((sum, item) => sum + (Number(item.score) || 0), 0);
     return {
       id: Date.now().toString(36),
       materialId: material.id,
       createdAt: (/* @__PURE__ */ new Date()).toISOString(),
-      totalScore: Number(result.totalScore) || Object.values(dimensions2).reduce((sum, item) => sum + (Number(item.score) || 0), 0),
-      grade: result.grade || "C",
+      totalScore,
+      grade: getConfiguredGrade(totalScore, model),
       summary: result.summary || "",
       dimensions: dimensions2,
       improvements: Array.isArray(result.improvements) ? result.improvements : [],
@@ -3211,21 +3287,22 @@ ${m.content}
     }
   }
   formatEvaluationSection(evaluation) {
+    const maxScore = getEvaluationDimensionItems(evaluation).reduce((sum, item) => sum + (Number(item.max) || 0), 0) || 100;
     return `
 ## \u4E94\u7EF4\u5EA6\u8BC4\u4EF7
 
-**\u603B\u5206**\uFF1A${evaluation.totalScore} / 100
+**\u603B\u5206**\uFF1A${evaluation.totalScore} / ${maxScore}
 **\u7B49\u7EA7**\uFF1A${evaluation.grade}
 
 ### \u5404\u7EF4\u5EA6\u5F97\u5206
 
 | \u7EF4\u5EA6 | \u5F97\u5206 | \u6EE1\u5206 | \u8BC4\u4EF7 |
 |---|---:|---:|---|
-| \u6307\u6807\u8D28\u91CF | ${evaluation.dimensions.indicatorQuality.score} | 20 | ${evaluation.dimensions.indicatorQuality.comment} |
-| \u8FC7\u7A0B\u7BA1\u7406 | ${evaluation.dimensions.processManagement.score} | 25 | ${evaluation.dimensions.processManagement.comment} |
-| \u6280\u63A7\u80FD\u529B | ${evaluation.dimensions.technicalControl.score} | 25 | ${evaluation.dimensions.technicalControl.comment} |
-| \u7EE9\u6548\u95ED\u73AF | ${evaluation.dimensions.pdcaClosure.score} | 20 | ${evaluation.dimensions.pdcaClosure.comment} |
-| \u6210\u6548\u4EE3\u4EF7 | ${evaluation.dimensions.effectCostRatio.score} | 10 | ${evaluation.dimensions.effectCostRatio.comment} |
+| \u6307\u6807\u8D28\u91CF | ${evaluation.dimensions.indicatorQuality.score} | ${evaluation.dimensions.indicatorQuality.maxScore || 20} | ${evaluation.dimensions.indicatorQuality.comment} |
+| \u8FC7\u7A0B\u7BA1\u7406 | ${evaluation.dimensions.processManagement.score} | ${evaluation.dimensions.processManagement.maxScore || 25} | ${evaluation.dimensions.processManagement.comment} |
+| \u6280\u63A7\u80FD\u529B | ${evaluation.dimensions.technicalControl.score} | ${evaluation.dimensions.technicalControl.maxScore || 25} | ${evaluation.dimensions.technicalControl.comment} |
+| \u7EE9\u6548\u95ED\u73AF | ${evaluation.dimensions.pdcaClosure.score} | ${evaluation.dimensions.pdcaClosure.maxScore || 20} | ${evaluation.dimensions.pdcaClosure.comment} |
+| \u6210\u6548\u4EE3\u4EF7 | ${evaluation.dimensions.effectCostRatio.score} | ${evaluation.dimensions.effectCostRatio.maxScore || 10} | ${evaluation.dimensions.effectCostRatio.comment} |
 
 ### \u6539\u8FDB\u5EFA\u8BAE
 
@@ -3560,6 +3637,7 @@ var ReviewAssistantSettingTab = class extends import_obsidian2.PluginSettingTab 
     const contentWrap = containerEl.createDiv({ cls: "review-settings-content" });
     const reviewContent = contentWrap.createDiv({ cls: `review-settings-tab-content ${this.activeSettingsTab === "review" ? "is-active" : ""}` });
     const modelContent = contentWrap.createDiv({ cls: `review-settings-tab-content ${this.activeSettingsTab === "model" ? "is-active" : ""}` });
+    const evaluationContent = contentWrap.createDiv({ cls: `review-settings-tab-content ${this.activeSettingsTab === "evaluation" ? "is-active" : ""}` });
     const createTab = (id, label) => {
       const button = tabBar.createEl("button", {
         cls: `review-settings-tab ${this.activeSettingsTab === id ? "is-active" : ""}`,
@@ -3572,8 +3650,10 @@ var ReviewAssistantSettingTab = class extends import_obsidian2.PluginSettingTab 
     };
     createTab("review", "述职管理");
     createTab("model", "模型管理");
+    createTab("evaluation", "评价模型");
     this.renderReviewSettings(reviewContent, settings);
     await this.renderModelSettings(modelContent, settings);
+    this.renderEvaluationSettings(evaluationContent, settings);
   }
   createSettingsCard(container, title, desc) {
     const card = container.createDiv({ cls: "review-settings-card" });
@@ -3683,6 +3763,119 @@ var ReviewAssistantSettingTab = class extends import_obsidian2.PluginSettingTab 
       })
     );
   }
+  renderEvaluationSettings(container, settings) {
+    const model = normalizeEvaluationModel(settings.get("evaluationModel"));
+    const totalScore = getEvaluationMaxScore(model);
+    const overviewCard = this.createSettingsCard(container, "评价模型", `当前模型满分 ${totalScore} 分。AI 评价、雷达图、评价报告和等级判断都会使用这里的配置。`);
+    overviewCard.createDiv({ cls: "review-model-note", text: "维度权重建议合计 100 分；如调整为其他总分，等级阈值也需要同步调整。" });
+    new import_obsidian2.Setting(overviewCard).setName("恢复默认评价模型").setDesc("恢复《超越指标》五维度权重、评价标准和等级阈值。").addButton(
+      (btn) => btn.setButtonText("恢复默认").onClick(async () => {
+        const nextModel = cloneEvaluationModel(DEFAULT_EVALUATION_MODEL);
+        await settings.set("evaluationModel", nextModel);
+        this.plugin.getAIService().setEvaluationModel(nextModel);
+        this.display();
+        new import_obsidian2.Notice("已恢复默认评价模型");
+      })
+    );
+    const dimensionsCard = this.createSettingsCard(container, "维度分数与评价标准", "修改每个评价维度的满分、核心问题、说明和评分标准。");
+    model.dimensions.forEach((dimension, index) => {
+      const section = dimensionsCard.createDiv({ cls: "review-evaluation-dimension" });
+      new import_obsidian2.Setting(section).setName(`${dimension.name}`).setDesc(`维度标识：${dimension.key}`).addText(
+        (text) => text.setPlaceholder("维度名称").setValue(dimension.name).onChange(async (value) => {
+          const nextModel = normalizeEvaluationModel(settings.get("evaluationModel"));
+          nextModel.dimensions[index].name = value.trim() || dimension.name;
+          await settings.set("evaluationModel", nextModel);
+          this.plugin.getAIService().setEvaluationModel(nextModel);
+        })
+      ).addText(
+        (text) => {
+          text.inputEl.type = "number";
+          text.setPlaceholder("分数").setValue(String(dimension.weight)).onChange(async (value) => {
+            const nextModel = normalizeEvaluationModel(settings.get("evaluationModel"));
+            nextModel.dimensions[index].weight = Math.max(0, Number(value) || 0);
+            await settings.set("evaluationModel", nextModel);
+            this.plugin.getAIService().setEvaluationModel(nextModel);
+          });
+        }
+      );
+      new import_obsidian2.Setting(section).setName("核心问题").setDesc("AI 在该维度下优先判断的管理问题。").addText(
+        (text) => text.setValue(dimension.question || "").onChange(async (value) => {
+          const nextModel = normalizeEvaluationModel(settings.get("evaluationModel"));
+          nextModel.dimensions[index].question = value.trim();
+          await settings.set("evaluationModel", nextModel);
+          this.plugin.getAIService().setEvaluationModel(nextModel);
+        })
+      );
+      new import_obsidian2.Setting(section).setName("评价说明").setDesc("该维度的总体评价口径。").addTextArea(
+        (text) => text.setValue(dimension.description || "").onChange(async (value) => {
+          const nextModel = normalizeEvaluationModel(settings.get("evaluationModel"));
+          nextModel.dimensions[index].description = value.trim();
+          await settings.set("evaluationModel", nextModel);
+          this.plugin.getAIService().setEvaluationModel(nextModel);
+        })
+      );
+      new import_obsidian2.Setting(section).setName("评分标准").setDesc("每行一条标准，会写入 AI 评价提示词。").addTextArea(
+        (text) => text.setValue((dimension.criteria || []).join("\n")).onChange(async (value) => {
+          const nextModel = normalizeEvaluationModel(settings.get("evaluationModel"));
+          nextModel.dimensions[index].criteria = value.split("\n").map((item) => item.trim()).filter(Boolean);
+          await settings.set("evaluationModel", nextModel);
+          this.plugin.getAIService().setEvaluationModel(nextModel);
+        })
+      );
+    });
+    const gradesCard = this.createSettingsCard(container, "等级评分规则", "按总分从高到低匹配等级。评价完成后插件会按这里的阈值重新计算等级。");
+    new import_obsidian2.Setting(gradesCard).setName("等级规则").setDesc("可新增自定义等级；最低分相同或顺序变化时会自动按分数从高到低排序。").addButton(
+      (btn) => btn.setButtonText("新增等级").onClick(async () => {
+        const nextModel = normalizeEvaluationModel(settings.get("evaluationModel"));
+        nextModel.grades.push({ grade: "新等级", minScore: 0, description: "填写该等级的评价口径" });
+        nextModel.grades.sort((a, b) => b.minScore - a.minScore);
+        await settings.set("evaluationModel", nextModel);
+        this.plugin.getAIService().setEvaluationModel(nextModel);
+        this.display();
+      })
+    );
+    model.grades.forEach((gradeRule, index) => {
+      new import_obsidian2.Setting(gradesCard).setName(`等级 ${gradeRule.grade}`).setDesc(gradeRule.description || "未填写等级说明").addText(
+        (text) => text.setPlaceholder("等级").setValue(gradeRule.grade).onChange(async (value) => {
+          const nextModel = normalizeEvaluationModel(settings.get("evaluationModel"));
+          nextModel.grades[index].grade = value.trim() || gradeRule.grade;
+          await settings.set("evaluationModel", nextModel);
+          this.plugin.getAIService().setEvaluationModel(nextModel);
+        })
+      ).addText(
+        (text) => {
+          text.inputEl.type = "number";
+          text.setPlaceholder("最低分").setValue(String(gradeRule.minScore)).onChange(async (value) => {
+            const nextModel = normalizeEvaluationModel(settings.get("evaluationModel"));
+            nextModel.grades[index].minScore = Math.max(0, Number(value) || 0);
+            nextModel.grades.sort((a, b) => b.minScore - a.minScore);
+            await settings.set("evaluationModel", nextModel);
+            this.plugin.getAIService().setEvaluationModel(nextModel);
+          });
+        }
+      ).addButton(
+        (btn) => btn.setIcon("trash").setTooltip("删除等级").onClick(async () => {
+          const nextModel = normalizeEvaluationModel(settings.get("evaluationModel"));
+          if (nextModel.grades.length <= 1) {
+            new import_obsidian2.Notice("至少保留一个等级规则");
+            return;
+          }
+          nextModel.grades.splice(index, 1);
+          await settings.set("evaluationModel", nextModel);
+          this.plugin.getAIService().setEvaluationModel(nextModel);
+          this.display();
+        })
+      );
+      new import_obsidian2.Setting(gradesCard).setName("等级说明").setDesc("用于提示 AI 和展示给配置人员。").addTextArea(
+        (text) => text.setValue(gradeRule.description || "").onChange(async (value) => {
+          const nextModel = normalizeEvaluationModel(settings.get("evaluationModel"));
+          nextModel.grades[index].description = value.trim();
+          await settings.set("evaluationModel", nextModel);
+          this.plugin.getAIService().setEvaluationModel(nextModel);
+        })
+      );
+    });
+  }
   renderReviewSettings(container, settings) {
     const peopleCard = this.createSettingsCard(container, "述职人配置", "维护参与述职的人员、岗位和默认指标。");
     const users = settings.get("users");
@@ -3791,6 +3984,7 @@ var ReviewAssistantSettingTab = class extends import_obsidian2.PluginSettingTab 
       this.plugin.getAIService().clearApiKey();
     }
     this.plugin.getAIService().setQuestionStyle(settings.get("questionStyle"));
+    this.plugin.getAIService().setEvaluationModel(settings.get("evaluationModel"));
   }
 };
 
@@ -4724,6 +4918,7 @@ var ReviewAssistantPlugin = class extends import_obsidian4.Plugin {
     );
     this.aiService = new AIService();
     this.aiService.setQuestionStyle(this.settingsManager.get("questionStyle"));
+    this.aiService.setEvaluationModel(this.settingsManager.get("evaluationModel"));
     if (this.settingsManager.get("claudeApiKey").trim()) {
       this.aiService.setApiKey(
         this.settingsManager.get("claudeApiKey"),
