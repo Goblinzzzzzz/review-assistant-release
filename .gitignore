@@ -1,0 +1,5 @@
+data.json
+*.log
+*.tmp
+*.download
+.DS_Store

@@ -1,0 +1,10 @@
+{
+  "id": "review-assistant",
+  "name": "述职助手",
+  "version": "1.0.0",
+  "minAppVersion": "1.0.0",
+  "description": "基于《超越指标》的述职评价工具，支持AI犀利追问和五维度点评",
+  "author": "Goblin",
+  "authorUrl": "https://github.com/goblin",
+  "isDesktopOnly": false
+}
