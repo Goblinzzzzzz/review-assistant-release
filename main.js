@@ -349,6 +349,8 @@ var MOMA_API_BASE_URL = "https://next.ke.com/ob/api";
 var MOMA_MANAGE_KEYS_URL = "https://moma.ke.com/manage-keys";
 var MOMA_DEFAULT_MODEL = "claude-4.6-sonnet";
 var ENABLE_LOCAL_VOICE_PLAYBACK = false;
+var REVIEW_ASSISTANT_PLUGIN_NAME = "惠居业务汇报管理";
+var REVIEW_ASSISTANT_WORKBENCH_TITLE = "惠居业务汇报工作台";
 var REVIEW_ASSISTANT_COPYRIGHT = "\xA9\uFE0F\u60E0\u5C45\u5E73\u53F0\u4EBA\u529B\u884C\u653F\u4E2D\u5FC3-\u4F51\u9E9F";
 var LEGACY_REVIEW_ASSISTANT_UPDATE_MANIFEST_URL = "https://raw.githubusercontent.com/Goblinzzzzzz/review-assistant-release/main/update.json";
 var REVIEW_ASSISTANT_UPDATE_MANIFEST_URL = "https://raw.githubusercontent.com/Goblinzzzzzz/review-assistant-release/refs/heads/main/update.json";
@@ -3632,7 +3634,7 @@ var ReviewAssistantSettingTab = class extends import_obsidian2.PluginSettingTab 
     if (!this.activeSettingsTab) {
       this.activeSettingsTab = "review";
     }
-    containerEl.createEl("h2", { text: "述职助手设置" });
+    containerEl.createEl("h2", { text: `${REVIEW_ASSISTANT_PLUGIN_NAME}设置` });
     const tabBar = containerEl.createDiv({ cls: "review-settings-tabs" });
     const contentWrap = containerEl.createDiv({ cls: "review-settings-content" });
     const reviewContent = contentWrap.createDiv({ cls: `review-settings-tab-content ${this.activeSettingsTab === "review" ? "is-active" : ""}` });
@@ -3768,26 +3770,34 @@ var ReviewAssistantSettingTab = class extends import_obsidian2.PluginSettingTab 
     const totalScore = getEvaluationMaxScore(model);
     const overviewCard = this.createSettingsCard(container, "评价模型", `当前模型满分 ${totalScore} 分。AI 评价、雷达图、评价报告和等级判断都会使用这里的配置。`);
     overviewCard.createDiv({ cls: "review-model-note", text: "维度权重建议合计 100 分；如调整为其他总分，等级阈值也需要同步调整。" });
-    new import_obsidian2.Setting(overviewCard).setName("恢复默认评价模型").setDesc("恢复《超越指标》五维度权重、评价标准和等级阈值。").addButton(
-      (btn) => btn.setButtonText("恢复默认").onClick(async () => {
-        const nextModel = cloneEvaluationModel(DEFAULT_EVALUATION_MODEL);
+    new import_obsidian2.Setting(overviewCard).setName("恢复默认分数").setDesc("仅恢复维度满分和等级最低分，不修改评价标准和说明内容。").addButton(
+      (btn) => btn.setButtonText("恢复默认分数").onClick(async () => {
+        const nextModel = normalizeEvaluationModel(settings.get("evaluationModel"));
+        const defaultModel = normalizeEvaluationModel(DEFAULT_EVALUATION_MODEL);
+        nextModel.dimensions = nextModel.dimensions.map((dimension) => {
+          const defaultDimension = defaultModel.dimensions.find((item) => item.key === dimension.key);
+          return {
+            ...dimension,
+            weight: defaultDimension ? defaultDimension.weight : dimension.weight
+          };
+        });
+        nextModel.grades = nextModel.grades.map((gradeRule) => {
+          const defaultGrade = defaultModel.grades.find((item) => item.grade === gradeRule.grade);
+          return {
+            ...gradeRule,
+            minScore: defaultGrade ? defaultGrade.minScore : gradeRule.minScore
+          };
+        }).sort((a, b) => b.minScore - a.minScore);
         await settings.set("evaluationModel", nextModel);
         this.plugin.getAIService().setEvaluationModel(nextModel);
         this.display();
-        new import_obsidian2.Notice("已恢复默认评价模型");
+        new import_obsidian2.Notice("已恢复默认分数");
       })
     );
-    const dimensionsCard = this.createSettingsCard(container, "维度分数与评价标准", "修改每个评价维度的满分、核心问题、说明和评分标准。");
+    const dimensionsCard = this.createSettingsCard(container, "维度分数与评价标准", "仅支持修改每个评价维度的满分；核心问题、评价说明和评分标准作为评价口径展示。");
     model.dimensions.forEach((dimension, index) => {
       const section = dimensionsCard.createDiv({ cls: "review-evaluation-dimension" });
       new import_obsidian2.Setting(section).setName(`${dimension.name}`).setDesc(`维度标识：${dimension.key}`).addText(
-        (text) => text.setPlaceholder("维度名称").setValue(dimension.name).onChange(async (value) => {
-          const nextModel = normalizeEvaluationModel(settings.get("evaluationModel"));
-          nextModel.dimensions[index].name = value.trim() || dimension.name;
-          await settings.set("evaluationModel", nextModel);
-          this.plugin.getAIService().setEvaluationModel(nextModel);
-        })
-      ).addText(
         (text) => {
           text.inputEl.type = "number";
           text.setPlaceholder("分数").setValue(String(dimension.weight)).onChange(async (value) => {
@@ -3798,81 +3808,32 @@ var ReviewAssistantSettingTab = class extends import_obsidian2.PluginSettingTab 
           });
         }
       );
-      new import_obsidian2.Setting(section).setName("核心问题").setDesc("AI 在该维度下优先判断的管理问题。").addText(
-        (text) => text.setValue(dimension.question || "").onChange(async (value) => {
-          const nextModel = normalizeEvaluationModel(settings.get("evaluationModel"));
-          nextModel.dimensions[index].question = value.trim();
-          await settings.set("evaluationModel", nextModel);
-          this.plugin.getAIService().setEvaluationModel(nextModel);
-        })
-      );
-      new import_obsidian2.Setting(section).setName("评价说明").setDesc("该维度的总体评价口径。").addTextArea(
-        (text) => text.setValue(dimension.description || "").onChange(async (value) => {
-          const nextModel = normalizeEvaluationModel(settings.get("evaluationModel"));
-          nextModel.dimensions[index].description = value.trim();
-          await settings.set("evaluationModel", nextModel);
-          this.plugin.getAIService().setEvaluationModel(nextModel);
-        })
-      );
-      new import_obsidian2.Setting(section).setName("评分标准").setDesc("每行一条标准，会写入 AI 评价提示词。").addTextArea(
-        (text) => text.setValue((dimension.criteria || []).join("\n")).onChange(async (value) => {
-          const nextModel = normalizeEvaluationModel(settings.get("evaluationModel"));
-          nextModel.dimensions[index].criteria = value.split("\n").map((item) => item.trim()).filter(Boolean);
-          await settings.set("evaluationModel", nextModel);
-          this.plugin.getAIService().setEvaluationModel(nextModel);
-        })
-      );
+      const readonly = section.createDiv({ cls: "review-model-readonly" });
+      readonly.createDiv({ cls: "review-model-readonly-label", text: "核心问题" });
+      readonly.createDiv({ cls: "review-model-readonly-text", text: dimension.question || "未配置" });
+      readonly.createDiv({ cls: "review-model-readonly-label", text: "评价说明" });
+      readonly.createDiv({ cls: "review-model-readonly-text", text: dimension.description || "未配置" });
+      readonly.createDiv({ cls: "review-model-readonly-label", text: "评分标准" });
+      const criteriaList = readonly.createEl("ul", { cls: "review-model-criteria-list" });
+      const criteria = dimension.criteria && dimension.criteria.length ? dimension.criteria : ["未配置"];
+      criteria.forEach((criterion) => criteriaList.createEl("li", { text: criterion }));
     });
-    const gradesCard = this.createSettingsCard(container, "等级评分规则", "按总分从高到低匹配等级。评价完成后插件会按这里的阈值重新计算等级。");
-    new import_obsidian2.Setting(gradesCard).setName("等级规则").setDesc("可新增自定义等级；最低分相同或顺序变化时会自动按分数从高到低排序。").addButton(
-      (btn) => btn.setButtonText("新增等级").onClick(async () => {
-        const nextModel = normalizeEvaluationModel(settings.get("evaluationModel"));
-        nextModel.grades.push({ grade: "新等级", minScore: 0, description: "填写该等级的评价口径" });
-        nextModel.grades.sort((a, b) => b.minScore - a.minScore);
-        await settings.set("evaluationModel", nextModel);
-        this.plugin.getAIService().setEvaluationModel(nextModel);
-        this.display();
-      })
-    );
+    const gradesCard = this.createSettingsCard(container, "等级评分规则", "仅支持修改等级最低分；等级名称和等级说明作为评价口径展示。评价完成后插件会按这里的阈值重新计算等级。");
     model.grades.forEach((gradeRule, index) => {
       new import_obsidian2.Setting(gradesCard).setName(`等级 ${gradeRule.grade}`).setDesc(gradeRule.description || "未填写等级说明").addText(
-        (text) => text.setPlaceholder("等级").setValue(gradeRule.grade).onChange(async (value) => {
-          const nextModel = normalizeEvaluationModel(settings.get("evaluationModel"));
-          nextModel.grades[index].grade = value.trim() || gradeRule.grade;
-          await settings.set("evaluationModel", nextModel);
-          this.plugin.getAIService().setEvaluationModel(nextModel);
-        })
-      ).addText(
         (text) => {
           text.inputEl.type = "number";
           text.setPlaceholder("最低分").setValue(String(gradeRule.minScore)).onChange(async (value) => {
             const nextModel = normalizeEvaluationModel(settings.get("evaluationModel"));
-            nextModel.grades[index].minScore = Math.max(0, Number(value) || 0);
+            const targetIndex = nextModel.grades.findIndex((item) => item.grade === gradeRule.grade);
+            if (targetIndex < 0)
+              return;
+            nextModel.grades[targetIndex].minScore = Math.max(0, Number(value) || 0);
             nextModel.grades.sort((a, b) => b.minScore - a.minScore);
             await settings.set("evaluationModel", nextModel);
             this.plugin.getAIService().setEvaluationModel(nextModel);
           });
         }
-      ).addButton(
-        (btn) => btn.setIcon("trash").setTooltip("删除等级").onClick(async () => {
-          const nextModel = normalizeEvaluationModel(settings.get("evaluationModel"));
-          if (nextModel.grades.length <= 1) {
-            new import_obsidian2.Notice("至少保留一个等级规则");
-            return;
-          }
-          nextModel.grades.splice(index, 1);
-          await settings.set("evaluationModel", nextModel);
-          this.plugin.getAIService().setEvaluationModel(nextModel);
-          this.display();
-        })
-      );
-      new import_obsidian2.Setting(gradesCard).setName("等级说明").setDesc("用于提示 AI 和展示给配置人员。").addTextArea(
-        (text) => text.setValue(gradeRule.description || "").onChange(async (value) => {
-          const nextModel = normalizeEvaluationModel(settings.get("evaluationModel"));
-          nextModel.grades[index].description = value.trim();
-          await settings.set("evaluationModel", nextModel);
-          this.plugin.getAIService().setEvaluationModel(nextModel);
-        })
       );
     });
   }
@@ -3951,7 +3912,7 @@ var ReviewAssistantSettingTab = class extends import_obsidian2.PluginSettingTab 
     );
 
     const aboutCard = this.createSettingsCard(container, "关于", "插件版本、版权和在线升级。");
-    new import_obsidian2.Setting(aboutCard).setName("述职助手").setDesc(`版本 ${this.plugin.manifest.version || "1.0.0"} | 基于《超越指标》方法论`);
+    new import_obsidian2.Setting(aboutCard).setName(REVIEW_ASSISTANT_PLUGIN_NAME).setDesc(`版本 ${this.plugin.manifest.version || "1.0.0"} | 基于《超越指标》方法论`);
     new import_obsidian2.Setting(aboutCard).setName("版权信息").setDesc(REVIEW_ASSISTANT_COPYRIGHT);
     new import_obsidian2.Setting(aboutCard).setName("在线升级清单 URL").setDesc("默认使用 GitHub 更新源。升级清单 JSON 需包含 version、mainJsUrl、stylesCssUrl，可选 manifestUrl、notes。").addText(
       (text) => text.setPlaceholder(REVIEW_ASSISTANT_UPDATE_MANIFEST_URL).setValue(settings.get("updateManifestUrl") || REVIEW_ASSISTANT_UPDATE_MANIFEST_URL).onChange(async (value) => {
@@ -4025,7 +3986,7 @@ var ReviewPanelView = class extends import_obsidian3.ItemView {
     return VIEW_TYPE_REVIEW_PANEL;
   }
   getDisplayText() {
-    return "\u8FF0\u804C\u52A9\u624B";
+    return REVIEW_ASSISTANT_PLUGIN_NAME;
   }
   getIcon() {
     return "review-assistant-icon";
@@ -4107,6 +4068,7 @@ var ReviewPanelView = class extends import_obsidian3.ItemView {
     const containerEl = contentEl.createDiv({ cls: "review-workbench" });
     if (!this.plugin.getSettingsManager().isConfigured()) {
       this.renderNotConfigured(containerEl);
+      this.renderFooter(containerEl);
       return;
     }
     this.renderHeader(containerEl);
@@ -4184,7 +4146,7 @@ var ReviewPanelView = class extends import_obsidian3.ItemView {
       header.createDiv({ cls: "review-title-block" }, (title) => {
         title.createDiv({ cls: "review-logo-dot", text: "\u8FF0" });
         title.createDiv({ cls: "review-title-text" }, (text) => {
-          text.createDiv({ cls: "review-title", text: "\u5468\u5EA6\u8FF0\u804C\u5DE5\u4F5C\u53F0" });
+          text.createDiv({ cls: "review-title", text: REVIEW_ASSISTANT_WORKBENCH_TITLE });
           text.createDiv({ cls: "review-subtitle", text: this.statusText });
         });
       });
@@ -4741,7 +4703,7 @@ var ReviewPanelView = class extends import_obsidian3.ItemView {
     });
   }
   renderFooter(container) {
-    container.createDiv({ cls: "review-footer", text: REVIEW_ASSISTANT_COPYRIGHT });
+    container.createDiv({ cls: "review-footer", text: `${REVIEW_ASSISTANT_COPYRIGHT} · 版本 ${this.plugin.manifest.version || "1.0.0"}` });
   }
   openFilePicker() {
     const files = this.app.vault.getMarkdownFiles();
@@ -4909,7 +4871,7 @@ var FilePickerModal = class extends import_obsidian3.FuzzySuggestModal {
 // main.ts
 var ReviewAssistantPlugin = class extends import_obsidian4.Plugin {
   async onload() {
-    console.log("\u8FF0\u804C\u52A9\u624B\u63D2\u4EF6\u52A0\u8F7D\u4E2D...");
+    console.log(`${REVIEW_ASSISTANT_PLUGIN_NAME}\u63D2\u4EF6\u52A0\u8F7D\u4E2D...`);
     await this.loadPluginStyles();
     const savedSettings = await this.loadData();
     this.settingsManager = new SettingsManager(
@@ -4936,18 +4898,18 @@ var ReviewAssistantPlugin = class extends import_obsidian4.Plugin {
       <line x1="12" x2="12" y1="19" y2="22"/>
     </svg>`);
     this.registerView(VIEW_TYPE_REVIEW_PANEL, (leaf) => new ReviewPanelView(leaf, this));
-    this.addRibbonIcon("review-assistant-icon", "\u6253\u5F00\u8FF0\u804C\u52A9\u624B", () => {
+    this.addRibbonIcon("review-assistant-icon", `\u6253\u5F00${REVIEW_ASSISTANT_PLUGIN_NAME}`, () => {
       this.activateView();
     });
     this.registerCommands();
     this.addSettingTab(new ReviewAssistantSettingTab(this.app, this));
     await this.dataService.initializeStructure();
     this.scheduleAutomaticUpdateCheck();
-    console.log("\u8FF0\u804C\u52A9\u624B\u63D2\u4EF6\u52A0\u8F7D\u5B8C\u6210");
+    console.log(`${REVIEW_ASSISTANT_PLUGIN_NAME}\u63D2\u4EF6\u52A0\u8F7D\u5B8C\u6210`);
   }
   onunload() {
     eventBus.clear();
-    console.log("\u8FF0\u804C\u52A9\u624B\u63D2\u4EF6\u5378\u8F7D");
+    console.log(`${REVIEW_ASSISTANT_PLUGIN_NAME}\u63D2\u4EF6\u5378\u8F7D`);
   }
   async loadPluginStyles() {
     try {
@@ -5087,7 +5049,7 @@ var ReviewAssistantPlugin = class extends import_obsidian4.Plugin {
   registerCommands() {
     this.addCommand({
       id: "open-panel",
-      name: "\u6253\u5F00\u8FF0\u804C\u9762\u677F",
+      name: "\u6253\u5F00\u5DE5\u4F5C\u6C47\u62A5\u5DE5\u4F5C\u53F0",
       callback: () => this.activateView()
     });
     this.addCommand({

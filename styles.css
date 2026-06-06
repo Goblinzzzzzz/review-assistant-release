@@ -130,6 +130,32 @@
   min-height: 84px;
 }
 
+.review-settings .review-model-readonly {
+  padding: 0 12px 10px;
+}
+
+.review-settings .review-model-readonly-label {
+  margin-top: 8px;
+  color: var(--text-normal);
+  font-size: var(--font-ui-smaller);
+  font-weight: 700;
+}
+
+.review-settings .review-model-readonly-text {
+  margin-top: 4px;
+  color: var(--text-muted);
+  font-size: var(--font-ui-small);
+  line-height: 1.5;
+}
+
+.review-settings .review-model-criteria-list {
+  margin: 6px 0 0 18px;
+  padding: 0;
+  color: var(--text-muted);
+  font-size: var(--font-ui-small);
+  line-height: 1.5;
+}
+
 .review-workbench {
   --review-brand: #D97757;
   --review-brand-rgb: 217, 119, 87;
