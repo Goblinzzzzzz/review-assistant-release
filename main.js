@@ -373,12 +373,16 @@ var SPEECH_RECOGNITION_PROVIDER_TENCENT_REALTIME = "tencent_realtime";
 var TENCENT_ASR_DEFAULT_ENGINE = "16k_zh";
 var TENCENT_ASR_DEFAULT_SAMPLE_RATE = 16e3;
 var TENCENT_ASR_PACKET_SAMPLE_COUNT = 3200;
+var SPEECH_PLAYBACK_PROVIDER_LOCAL = "local";
+var SPEECH_PLAYBACK_PROVIDER_TENCENT = "tencent";
+var TENCENT_TTS_DEFAULT_VOICE_TYPE = 101001;
+var TENCENT_TTS_DEFAULT_CODEC = "mp3";
+var TENCENT_TTS_MAX_CHARS = 500;
 var HOMEBREW_INSTALL_COMMAND = `/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"`;
 var BREW_INSTALL_DEPENDENCIES_COMMAND = "brew update && brew install whisper-cpp ffmpeg";
 var MOMA_API_BASE_URL = "https://next.ke.com/ob/api";
 var MOMA_MANAGE_KEYS_URL = "https://moma.ke.com/manage-keys";
 var MOMA_DEFAULT_MODEL = "claude-4.6-sonnet";
-var ENABLE_LOCAL_VOICE_PLAYBACK = false;
 var REVIEW_ASSISTANT_PLUGIN_NAME = "惠居业务汇报管理";
 var REVIEW_ASSISTANT_WORKBENCH_TITLE = "惠居业务汇报工作台";
 var REVIEW_ASSISTANT_COPYRIGHT = "\xA9\uFE0F\u60E0\u5C45\u5E73\u53F0\u4EBA\u529B\u884C\u653F\u4E2D\u5FC3-\u4F51\u9E9F";
@@ -418,6 +422,12 @@ function normalizeSpeechRecognitionProvider(provider) {
     return provider;
   }
   return SPEECH_RECOGNITION_PROVIDER_LOCAL;
+}
+function normalizeSpeechPlaybackProvider(provider) {
+  if (provider === SPEECH_PLAYBACK_PROVIDER_TENCENT) {
+    return provider;
+  }
+  return SPEECH_PLAYBACK_PROVIDER_LOCAL;
 }
 function encodeTencentQueryValue(value) {
   return encodeURIComponent(String(value));
@@ -482,6 +492,104 @@ function float32ToInt16Samples(input) {
   }
   return output;
 }
+function getTencentTtsCredentials(settings) {
+  const useAsrCredentials = settings.get("tencentTtsUseAsrCredentials") !== false;
+  return {
+    appId: String(useAsrCredentials ? settings.get("tencentAsrAppId") || "" : settings.get("tencentTtsAppId") || "").trim(),
+    secretId: String(useAsrCredentials ? settings.get("tencentAsrSecretId") || "" : settings.get("tencentTtsSecretId") || "").trim(),
+    secretKey: String(useAsrCredentials ? settings.get("tencentAsrSecretKey") || "" : settings.get("tencentTtsSecretKey") || "").trim()
+  };
+}
+function buildTencentTtsWebSocketUrl(settings, text) {
+  const { appId, secretId, secretKey } = getTencentTtsCredentials(settings);
+  if (!appId || !secretId || !secretKey) {
+    throw new Error("\u8BF7\u5148\u586B\u5199\u817E\u8BAF\u4E91\u8BED\u97F3\u5408\u6210 AppID\u3001SecretID \u548C SecretKey");
+  }
+  const now = Math.floor(Date.now() / 1e3);
+  const params = {
+    Action: "TextToStreamAudioWS",
+    AppId: Number(appId),
+    Codec: String(settings.get("tencentTtsCodec") || TENCENT_TTS_DEFAULT_CODEC),
+    EnableSubtitle: false,
+    Expired: now + 3600,
+    SampleRate: Number(settings.get("tencentTtsSampleRate") || 16e3),
+    SecretId: secretId,
+    SessionId: uuid4(),
+    Speed: Number(settings.get("tencentTtsSpeed") ?? 0),
+    Text: text,
+    Timestamp: now,
+    VoiceType: Number(settings.get("tencentTtsVoiceType") || TENCENT_TTS_DEFAULT_VOICE_TYPE),
+    Volume: Number(settings.get("tencentTtsVolume") ?? 0)
+  };
+  const sortedKeys = Object.keys(params).sort();
+  const rawQuery = sortedKeys.map((key) => `${key}=${params[key]}`).join("&");
+  const signText = `GETtts.cloud.tencent.com/stream_ws?${rawQuery}`;
+  const crypto = require("crypto");
+  const signature = crypto.createHmac("sha1", secretKey).update(signText).digest("base64");
+  const finalQuery = sortedKeys.map((key) => `${key}=${encodeTencentQueryValue(params[key])}`).join("&");
+  return `wss://tts.cloud.tencent.com/stream_ws?${finalQuery}&Signature=${encodeTencentQueryValue(signature)}`;
+}
+function stripSpeechPlaybackText(text) {
+  return String(text || "").replace(/\*\*/g, "").replace(/`([^`]+)`/g, "$1").replace(/^[-#>*\s]+/gm, "").replace(/\[[^\]]+\]\([^)]+\)/g, "").replace(/\s+\n/g, "\n").trim();
+}
+function splitTencentTtsText(text) {
+  const clean = stripSpeechPlaybackText(text);
+  if (!clean)
+    return [];
+  const chunks = [];
+  const parts = clean.split(/(?<=[。！？!?；;])\s*|\n+/u).map((item) => item.trim()).filter(Boolean);
+  let current = "";
+  const pushCurrent = () => {
+    if (current.trim()) {
+      chunks.push(current.trim());
+      current = "";
+    }
+  };
+  for (const part of parts.length ? parts : [clean]) {
+    if (part.length > TENCENT_TTS_MAX_CHARS) {
+      pushCurrent();
+      for (let i = 0; i < part.length; i += TENCENT_TTS_MAX_CHARS) {
+        chunks.push(part.slice(i, i + TENCENT_TTS_MAX_CHARS));
+      }
+      continue;
+    }
+    if ((current + part).length > TENCENT_TTS_MAX_CHARS) {
+      pushCurrent();
+    }
+    current = current ? `${current}${part}` : part;
+  }
+  pushCurrent();
+  return chunks;
+}
+function createWavBlobFromPcmChunks(chunks, sampleRate) {
+  const totalBytes = chunks.reduce((sum, chunk) => sum + chunk.byteLength, 0);
+  const wavBuffer = new ArrayBuffer(44 + totalBytes);
+  const view = new DataView(wavBuffer);
+  const writeString = (offset, value) => {
+    for (let i = 0; i < value.length; i++) {
+      view.setUint8(offset + i, value.charCodeAt(i));
+    }
+  };
+  writeString(0, "RIFF");
+  view.setUint32(4, 36 + totalBytes, true);
+  writeString(8, "WAVE");
+  writeString(12, "fmt ");
+  view.setUint32(16, 16, true);
+  view.setUint16(20, 1, true);
+  view.setUint16(22, 1, true);
+  view.setUint32(24, sampleRate, true);
+  view.setUint32(28, sampleRate * 2, true);
+  view.setUint16(32, 2, true);
+  view.setUint16(34, 16, true);
+  writeString(36, "data");
+  view.setUint32(40, totalBytes, true);
+  let offset = 44;
+  for (const chunk of chunks) {
+    new Uint8Array(wavBuffer, offset, chunk.byteLength).set(new Uint8Array(chunk));
+    offset += chunk.byteLength;
+  }
+  return new Blob([wavBuffer], { type: "audio/wav" });
+}
 var DEFAULT_SETTINGS = {
   // AI配置
   claudeApiKey: "",
@@ -500,6 +608,16 @@ var DEFAULT_SETTINGS = {
   tencentAsrFilterPunc: 0,
   tencentAsrConvertNumMode: 1,
   tencentAsrHotwordList: "",
+  speechPlaybackType: SPEECH_PLAYBACK_PROVIDER_LOCAL,
+  tencentTtsUseAsrCredentials: true,
+  tencentTtsAppId: "",
+  tencentTtsSecretId: "",
+  tencentTtsSecretKey: "",
+  tencentTtsVoiceType: TENCENT_TTS_DEFAULT_VOICE_TYPE,
+  tencentTtsCodec: TENCENT_TTS_DEFAULT_CODEC,
+  tencentTtsSampleRate: 16e3,
+  tencentTtsSpeed: 0,
+  tencentTtsVolume: 0,
   homebrewPath: "",
   whisperCliPath: "/opt/homebrew/bin/whisper-cli",
   ffmpegPath: "",
@@ -4346,6 +4464,65 @@ var ReviewAssistantSettingTab = class extends import_obsidian2.PluginSettingTab 
         })
       );
     }
+    const playbackCard = this.createSettingsCard(container, "\u8BED\u97F3\u64AD\u62A5\u914D\u7F6E", "AI 追问和总结可通过本地系统语音或腾讯云实时语音合成播报。");
+    const playbackProvider = normalizeSpeechPlaybackProvider(settings.get("speechPlaybackType"));
+    new import_obsidian2.Setting(playbackCard).setName("\u64AD\u62A5\u670D\u52A1").setDesc("\u672C\u5730\u7CFB\u7EDF\u8BED\u97F3\u4E0D\u4E0A\u4F20\u6587\u672C\uFF1B\u817E\u8BAF\u4E91\u8BED\u97F3\u5408\u6210\u4F1A\u4E0A\u4F20 AI \u8FFD\u95EE/\u70B9\u8BC4\u6587\u672C\u3002").addDropdown(
+      (dropdown) => dropdown.addOption(SPEECH_PLAYBACK_PROVIDER_LOCAL, "\u672C\u5730\u7CFB\u7EDF\u8BED\u97F3").addOption(SPEECH_PLAYBACK_PROVIDER_TENCENT, "\u817E\u8BAF\u4E91\u5B9E\u65F6\u8BED\u97F3\u5408\u6210").setValue(playbackProvider).onChange(async (value) => {
+        await settings.set("speechPlaybackType", normalizeSpeechPlaybackProvider(value));
+        this.display();
+      })
+    );
+    if (playbackProvider === SPEECH_PLAYBACK_PROVIDER_TENCENT) {
+      new import_obsidian2.Setting(playbackCard).setName("\u590D\u7528\u8BED\u97F3\u8BC6\u522B\u817E\u8BAF\u4E91\u5BC6\u94A5").setDesc("\u5F00\u542F\u540E\u4F7F\u7528\u4E0A\u65B9\u817E\u8BAF\u4E91 ASR \u7684 AppID\u3001SecretID \u548C SecretKey\u3002").addToggle(
+        (toggle) => toggle.setValue(settings.get("tencentTtsUseAsrCredentials") !== false).onChange(async (value) => {
+          await settings.set("tencentTtsUseAsrCredentials", value);
+          this.display();
+        })
+      );
+      if (settings.get("tencentTtsUseAsrCredentials") === false) {
+        new import_obsidian2.Setting(playbackCard).setName("\u817E\u8BAF\u4E91 TTS AppID").setDesc("\u817E\u8BAF\u4E91\u8D26\u53F7 AppID\u3002").addText(
+          (text) => text.setPlaceholder("1250000000").setValue(settings.get("tencentTtsAppId") || "").onChange(async (value) => {
+            await settings.set("tencentTtsAppId", value.trim());
+          })
+        );
+        new import_obsidian2.Setting(playbackCard).setName("\u817E\u8BAF\u4E91 TTS SecretID").setDesc("\u7528\u4E8E\u751F\u6210\u5B9E\u65F6\u8BED\u97F3\u5408\u6210 WebSocket \u9274\u6743\u7B7E\u540D\u3002").addText(
+          (text) => text.setPlaceholder("AKID...").setValue(settings.get("tencentTtsSecretId") || "").onChange(async (value) => {
+            await settings.set("tencentTtsSecretId", value.trim());
+          })
+        );
+        new import_obsidian2.Setting(playbackCard).setName("\u817E\u8BAF\u4E91 TTS SecretKey").setDesc("\u4FDD\u5B58\u5728\u672C\u5730 Obsidian \u63D2\u4EF6\u914D\u7F6E\u4E2D\uFF0C\u8BF7\u52FF\u5206\u4EAB\u914D\u7F6E\u6587\u4EF6\u3002").addText(
+          (text) => {
+            text.inputEl.type = "password";
+            text.setPlaceholder("SecretKey").setValue(settings.get("tencentTtsSecretKey") || "").onChange(async (value) => {
+              await settings.set("tencentTtsSecretKey", value.trim());
+            });
+          }
+        );
+      }
+      new import_obsidian2.Setting(playbackCard).setName("\u97F3\u8272 ID").setDesc("\u586B\u5199\u817E\u8BAF\u4E91\u8BED\u97F3\u5408\u6210 VoiceType\uFF0C\u9ED8\u8BA4 101001\u3002").addText(
+        (text) => {
+          text.inputEl.type = "number";
+          text.setPlaceholder(String(TENCENT_TTS_DEFAULT_VOICE_TYPE)).setValue(String(settings.get("tencentTtsVoiceType") || TENCENT_TTS_DEFAULT_VOICE_TYPE)).onChange(async (value) => {
+            await settings.set("tencentTtsVoiceType", Number(value) || TENCENT_TTS_DEFAULT_VOICE_TYPE);
+          });
+        }
+      );
+      new import_obsidian2.Setting(playbackCard).setName("\u8BED\u901F").setDesc("\u8303\u56F4 -2 \u5230 6\uFF0C0 \u4E3A\u9ED8\u8BA4\u8BED\u901F\u3002").addSlider(
+        (slider) => slider.setLimits(-2, 6, 0.25).setValue(Number(settings.get("tencentTtsSpeed") ?? 0)).setDynamicTooltip().onChange(async (value) => {
+          await settings.set("tencentTtsSpeed", value);
+        })
+      );
+      new import_obsidian2.Setting(playbackCard).setName("\u97F3\u91CF").setDesc("\u8303\u56F4 -10 \u5230 10\uFF0C0 \u4E3A\u9ED8\u8BA4\u97F3\u91CF\u3002").addSlider(
+        (slider) => slider.setLimits(-10, 10, 1).setValue(Number(settings.get("tencentTtsVolume") ?? 0)).setDynamicTooltip().onChange(async (value) => {
+          await settings.set("tencentTtsVolume", value);
+        })
+      );
+      new import_obsidian2.Setting(playbackCard).setName("\u8FD4\u56DE\u97F3\u9891\u683C\u5F0F").setDesc("MP3 \u66F4\u9002\u5408\u76F4\u63A5\u5728\u63D2\u4EF6\u5185\u64AD\u653E\u3002").addDropdown(
+        (dropdown) => dropdown.addOption("mp3", "mp3").addOption("pcm", "pcm").setValue(settings.get("tencentTtsCodec") || TENCENT_TTS_DEFAULT_CODEC).onChange(async (value) => {
+          await settings.set("tencentTtsCodec", value);
+        })
+      );
+    }
   }
   renderEvaluationSettings(container, settings) {
     const model = normalizeEvaluationModel(settings.get("evaluationModel"));
@@ -4565,6 +4742,11 @@ var ReviewPanelView = class extends import_obsidian3.ItemView {
     this.tencentAsrFinalPromise = null;
     this.tencentAsrFinalResolver = null;
     this.tencentAsrRuntimeErrorHandled = false;
+    this.currentSpeechAudio = null;
+    this.currentTtsSocket = null;
+    this.speechPlaybackBusy = false;
+    this.speechPlaybackToken = 0;
+    this.cancelSpeechPlaybackPromise = null;
     this.missingWhisperModelNoticeShown = false;
     this.voiceSetupBusy = false;
     this.voiceSetupAutoStarted = false;
@@ -5040,11 +5222,15 @@ var ReviewPanelView = class extends import_obsidian3.ItemView {
       row.createDiv({ cls: "review-avatar", text: message.role === "assistant" ? "AI" : "\u4EBA" });
       row.createDiv({ cls: "review-message-content" }, (content) => {
         content.createDiv({ cls: "review-message-meta" }, (meta) => {
-          meta.createSpan({ text: message.role === "assistant" ? message.type === "evaluation-summary" ? "AI\u603B\u7ED3" : "AI\u8FFD\u95EE" : "\u8FF0\u804C\u56DE\u7B54" });
-          if (message.role === "assistant" && ENABLE_LOCAL_VOICE_PLAYBACK) {
-            const speak = meta.createEl("button", { cls: "review-speak-btn", text: "\u64AD\u653E" });
-            speak.title = "\u4F7F\u7528\u672C\u5730\u7CFB\u7EDF\u8BED\u97F3\u64AD\u653E\uFF0C\u4E0D\u4EA7\u751F\u989D\u5916\u8D39\u7528";
-            speak.addEventListener("click", () => this.speakMessage(message.content));
+          meta.createSpan({ cls: "review-message-meta-label", text: message.role === "assistant" ? message.type === "evaluation-summary" ? "AI\u603B\u7ED3" : "AI\u8FFD\u95EE" : "\u8FF0\u804C\u56DE\u7B54" });
+          if (message.role === "assistant") {
+            const actions = meta.createDiv({ cls: "review-message-inline-actions" });
+            const speak = actions.createEl("button", { cls: "review-speak-control", attr: { "aria-label": "\u64AD\u62A5 AI \u5185\u5BB9" } });
+            (0, import_obsidian3.setIcon)(speak, "volume-2");
+            speak.title = "\u64AD\u62A5 AI \u5185\u5BB9";
+            speak.addEventListener("click", async () => {
+              await this.speakMessage(message.content, speak);
+            });
           }
         });
         content.createDiv({ cls: "review-message-bubble", text: message.content });
@@ -5053,13 +5239,68 @@ var ReviewPanelView = class extends import_obsidian3.ItemView {
     if (scroll)
       this.scrollToBottom();
   }
-  speakMessage(text) {
+  async speakMessage(text, controlEl) {
+    const playbackProvider = normalizeSpeechPlaybackProvider(this.plugin.getSettingsManager().get("speechPlaybackType"));
+    this.stopSpeechPlayback();
+    const playbackToken = this.speechPlaybackToken;
+    if (controlEl) {
+      controlEl.addClass("is-speaking");
+      controlEl.disabled = true;
+    }
+    this.speechPlaybackBusy = true;
+    try {
+      if (playbackProvider === SPEECH_PLAYBACK_PROVIDER_TENCENT) {
+        await this.speakWithTencentTts(text, playbackToken);
+      } else {
+        await this.speakWithLocalSpeech(text, playbackToken);
+      }
+    } catch (error) {
+      if (!(error instanceof Error && error.message === "speech-playback-canceled")) {
+        new import_obsidian3.Notice(`\u8BED\u97F3\u64AD\u62A5\u5931\u8D25\uFF1A${error instanceof Error ? error.message : "\u672A\u77E5\u9519\u8BEF"}`);
+      }
+    } finally {
+      if (this.speechPlaybackToken === playbackToken) {
+        this.speechPlaybackBusy = false;
+      }
+      if (controlEl) {
+        controlEl.removeClass("is-speaking");
+        controlEl.disabled = false;
+      }
+    }
+  }
+  stopSpeechPlayback() {
+    this.speechPlaybackToken += 1;
+    if (this.cancelSpeechPlaybackPromise) {
+      this.cancelSpeechPlaybackPromise();
+      this.cancelSpeechPlaybackPromise = null;
+    }
+    if (typeof window !== "undefined" && window.speechSynthesis) {
+      window.speechSynthesis.cancel();
+    }
+    if (this.currentSpeechAudio) {
+      try {
+        this.currentSpeechAudio.pause();
+        if (this.currentSpeechAudio.src)
+          URL.revokeObjectURL(this.currentSpeechAudio.src);
+      } catch (error) {
+      }
+      this.currentSpeechAudio = null;
+    }
+    if (this.currentTtsSocket) {
+      try {
+        this.currentTtsSocket.close();
+      } catch (error) {
+      }
+      this.currentTtsSocket = null;
+    }
+  }
+  async speakWithLocalSpeech(text, playbackToken) {
     if (typeof window === "undefined" || !window.speechSynthesis || typeof SpeechSynthesisUtterance === "undefined") {
       new import_obsidian3.Notice("\u5F53\u524D\u73AF\u5883\u4E0D\u652F\u6301\u672C\u5730\u8BED\u97F3\u64AD\u653E");
       return;
     }
     window.speechSynthesis.cancel();
-    const utterance = new SpeechSynthesisUtterance(text.replace(/\*\*/g, "").replace(/^[-#]\s?/gm, ""));
+    const utterance = new SpeechSynthesisUtterance(stripSpeechPlaybackText(text));
     utterance.lang = "zh-CN";
     utterance.rate = 1;
     utterance.pitch = 1;
@@ -5067,7 +5308,176 @@ var ReviewPanelView = class extends import_obsidian3.ItemView {
     const preferredVoice = voices.find((voice) => /zh|Chinese|中文|普通话|Mandarin/i.test(`${voice.lang} ${voice.name}`));
     if (preferredVoice)
       utterance.voice = preferredVoice;
-    window.speechSynthesis.speak(utterance);
+    await new Promise((resolve, reject) => {
+      this.cancelSpeechPlaybackPromise = () => resolve();
+      utterance.onend = () => {
+        if (this.speechPlaybackToken === playbackToken)
+          this.cancelSpeechPlaybackPromise = null;
+        resolve();
+      };
+      utterance.onerror = () => {
+        if (this.speechPlaybackToken !== playbackToken) {
+          resolve();
+          return;
+        }
+        this.cancelSpeechPlaybackPromise = null;
+        reject(new Error("\u672C\u5730\u8BED\u97F3\u64AD\u653E\u5931\u8D25"));
+      };
+      window.speechSynthesis.speak(utterance);
+    });
+  }
+  async speakWithTencentTts(text, playbackToken) {
+    const chunks = splitTencentTtsText(text);
+    if (chunks.length === 0)
+      return;
+    for (const chunk of chunks) {
+      if (this.speechPlaybackToken !== playbackToken)
+        throw new Error("speech-playback-canceled");
+      const audioBlob = await this.fetchTencentTtsAudio(chunk, playbackToken);
+      if (this.speechPlaybackToken !== playbackToken)
+        throw new Error("speech-playback-canceled");
+      await this.playSpeechAudioBlob(audioBlob, playbackToken);
+    }
+  }
+  async fetchTencentTtsAudio(text, playbackToken) {
+    const settings = this.plugin.getSettingsManager();
+    const url = buildTencentTtsWebSocketUrl(settings, text);
+    const WebSocketCtor = window.WebSocket;
+    if (!WebSocketCtor) {
+      throw new Error("\u5F53\u524D\u73AF\u5883\u4E0D\u652F\u6301 WebSocket");
+    }
+    const codec = settings.get("tencentTtsCodec") || TENCENT_TTS_DEFAULT_CODEC;
+    const sampleRate = Number(settings.get("tencentTtsSampleRate") || 16e3);
+    const socket = new WebSocketCtor(url);
+    socket.binaryType = "arraybuffer";
+    if (this.speechPlaybackToken === playbackToken)
+      this.currentTtsSocket = socket;
+    const audioChunks = [];
+    return await new Promise((resolve, reject) => {
+      let settled = false;
+      const finish = () => {
+        if (settled)
+          return;
+        settled = true;
+        if (this.speechPlaybackToken !== playbackToken) {
+          resolve(new Blob());
+          return;
+        }
+        this.currentTtsSocket = null;
+        this.cancelSpeechPlaybackPromise = null;
+        if (audioChunks.length === 0) {
+          reject(new Error("\u817E\u8BAF\u4E91\u672A\u8FD4\u56DE\u53EF\u64AD\u653E\u97F3\u9891"));
+          return;
+        }
+        if (codec === "pcm") {
+          resolve(createWavBlobFromPcmChunks(audioChunks, sampleRate));
+        } else {
+          resolve(new Blob(audioChunks, { type: "audio/mpeg" }));
+        }
+      };
+      const fail = (message) => {
+        if (settled)
+          return;
+        settled = true;
+        if (this.speechPlaybackToken !== playbackToken) {
+          resolve(new Blob());
+          return;
+        }
+        this.currentTtsSocket = null;
+        this.cancelSpeechPlaybackPromise = null;
+        reject(new Error(message));
+      };
+      this.cancelSpeechPlaybackPromise = () => {
+        if (settled)
+          return;
+        settled = true;
+        clearTimeout(timeout);
+        try {
+          socket.close();
+        } catch (error) {
+        }
+        resolve(new Blob());
+      };
+      const timeout = setTimeout(() => fail("\u817E\u8BAF\u4E91\u8BED\u97F3\u5408\u6210\u8D85\u65F6"), 45e3);
+      socket.onerror = () => {
+        clearTimeout(timeout);
+        fail("\u817E\u8BAF\u4E91\u8BED\u97F3\u5408\u6210\u8FDE\u63A5\u5F02\u5E38");
+      };
+      socket.onclose = () => {
+        clearTimeout(timeout);
+        if (this.speechPlaybackToken !== playbackToken)
+          return;
+        finish();
+      };
+      socket.onmessage = async (event) => {
+        if (this.speechPlaybackToken !== playbackToken)
+          return;
+        if (event.data instanceof ArrayBuffer) {
+          audioChunks.push(event.data);
+          return;
+        }
+        if (typeof Blob !== "undefined" && event.data instanceof Blob) {
+          audioChunks.push(await event.data.arrayBuffer());
+          return;
+        }
+        let data = null;
+        try {
+          data = JSON.parse(String(event.data || "{}"));
+        } catch (error) {
+          return;
+        }
+        if (data.code !== void 0 && data.code !== 0) {
+          clearTimeout(timeout);
+          fail(data.message || "\u817E\u8BAF\u4E91\u8BED\u97F3\u5408\u6210\u5931\u8D25");
+          return;
+        }
+        if (data.final === 1) {
+          clearTimeout(timeout);
+          socket.close();
+          finish();
+        }
+      };
+    });
+  }
+  async playSpeechAudioBlob(blob, playbackToken) {
+    if (!blob || blob.size === 0)
+      return;
+    const audioUrl = URL.createObjectURL(blob);
+    const audio = new Audio(audioUrl);
+    if (this.speechPlaybackToken === playbackToken)
+      this.currentSpeechAudio = audio;
+    await new Promise((resolve, reject) => {
+      this.cancelSpeechPlaybackPromise = () => {
+        try {
+          audio.pause();
+        } catch (error) {
+        }
+        URL.revokeObjectURL(audioUrl);
+        if (this.currentSpeechAudio === audio)
+          this.currentSpeechAudio = null;
+        resolve();
+      };
+      audio.onended = () => {
+        URL.revokeObjectURL(audioUrl);
+        if (this.currentSpeechAudio === audio)
+          this.currentSpeechAudio = null;
+        if (this.speechPlaybackToken === playbackToken)
+          this.cancelSpeechPlaybackPromise = null;
+        resolve();
+      };
+      audio.onerror = () => {
+        URL.revokeObjectURL(audioUrl);
+        if (this.currentSpeechAudio === audio)
+          this.currentSpeechAudio = null;
+        if (this.speechPlaybackToken !== playbackToken) {
+          resolve();
+          return;
+        }
+        this.cancelSpeechPlaybackPromise = null;
+        reject(new Error("\u97F3\u9891\u64AD\u653E\u5931\u8D25"));
+      };
+      audio.play().catch(reject);
+    });
   }
   renderInput(container) {
     container.createDiv({ cls: "review-input-panel" }, (panel) => {
