@@ -259,7 +259,8 @@ var MOMA_MANAGE_KEYS_URL = "https://moma.ke.com/manage-keys";
 var MOMA_DEFAULT_MODEL = "claude-4.6-sonnet";
 var ENABLE_LOCAL_VOICE_PLAYBACK = false;
 var REVIEW_ASSISTANT_COPYRIGHT = "\xA9\uFE0F\u60E0\u5C45\u5E73\u53F0\u4EBA\u529B\u884C\u653F\u4E2D\u5FC3-\u4F51\u9E9F";
-var REVIEW_ASSISTANT_UPDATE_MANIFEST_URL = "https://raw.githubusercontent.com/Goblinzzzzzz/review-assistant-release/main/update.json";
+var LEGACY_REVIEW_ASSISTANT_UPDATE_MANIFEST_URL = "https://raw.githubusercontent.com/Goblinzzzzzz/review-assistant-release/main/update.json";
+var REVIEW_ASSISTANT_UPDATE_MANIFEST_URL = "https://raw.githubusercontent.com/Goblinzzzzzz/review-assistant-release/refs/heads/main/update.json";
 function isBundledWhisperModelPath(modelPath) {
   if (!modelPath)
     return true;
@@ -301,6 +302,9 @@ var SettingsManager = class {
     if (isLegacyBuiltInAiBaseUrl(initialSettings.claudeApiBaseUrl)) {
       this.settings.claudeApiBaseUrl = MOMA_API_BASE_URL;
       this.settings.claudeModel = MOMA_DEFAULT_MODEL;
+    }
+    if (!initialSettings.updateManifestUrl || initialSettings.updateManifestUrl === LEGACY_REVIEW_ASSISTANT_UPDATE_MANIFEST_URL) {
+      this.settings.updateManifestUrl = REVIEW_ASSISTANT_UPDATE_MANIFEST_URL;
     }
     this.saveCallback = saveCallback;
   }

@@ -1,7 +1,7 @@
 {
-  "version": "1.0.2",
-  "notes": "增加启动后每日自动检查更新提醒；首次安装默认不再内置测试述职人，需要各城市自行配置述职人。",
-  "mainJsUrl": "https://raw.githubusercontent.com/Goblinzzzzzz/review-assistant-release/1df6659d3e911f5446545a02e0ea7816ab2cd6cc/main.js",
-  "stylesCssUrl": "https://raw.githubusercontent.com/Goblinzzzzzz/review-assistant-release/1df6659d3e911f5446545a02e0ea7816ab2cd6cc/styles.css",
-  "manifestUrl": "https://raw.githubusercontent.com/Goblinzzzzzz/review-assistant-release/1df6659d3e911f5446545a02e0ea7816ab2cd6cc/manifest.json"
+  "version": "1.0.3",
+  "notes": "自动检查更新使用更稳定的 GitHub refs 地址，并兼容迁移旧升级清单地址；首次安装默认不再内置测试述职人。",
+  "mainJsUrl": "https://raw.githubusercontent.com/Goblinzzzzzz/review-assistant-release/refs/heads/main/main.js",
+  "stylesCssUrl": "https://raw.githubusercontent.com/Goblinzzzzzz/review-assistant-release/refs/heads/main/styles.css",
+  "manifestUrl": "https://raw.githubusercontent.com/Goblinzzzzzz/review-assistant-release/refs/heads/main/manifest.json"
 }
