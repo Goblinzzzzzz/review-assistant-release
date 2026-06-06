@@ -1,7 +1,7 @@
 {
-  "version": "1.0.4",
-  "notes": "新增“评价模型”配置页，支持查看和修改五维度评分权重、评价标准、等级阈值，并按配置规则重新计算评价等级。",
-  "mainJsUrl": "https://raw.githubusercontent.com/Goblinzzzzzz/review-assistant-release/0c1c478b4835edfb10060919c50fc9af2897159f/main.js",
-  "stylesCssUrl": "https://raw.githubusercontent.com/Goblinzzzzzz/review-assistant-release/0c1c478b4835edfb10060919c50fc9af2897159f/styles.css",
-  "manifestUrl": "https://raw.githubusercontent.com/Goblinzzzzzz/review-assistant-release/0c1c478b4835edfb10060919c50fc9af2897159f/manifest.json"
+  "version": "1.0.5",
+  "notes": "插件更名为“惠居业务汇报管理”，主界面顶部显示“惠居业务汇报工作台”；评价模型配置仅允许修改分数，标准内容和等级说明改为只读展示。",
+  "mainJsUrl": "https://raw.githubusercontent.com/Goblinzzzzzz/review-assistant-release/refs/heads/main/main.js",
+  "stylesCssUrl": "https://raw.githubusercontent.com/Goblinzzzzzz/review-assistant-release/refs/heads/main/styles.css",
+  "manifestUrl": "https://raw.githubusercontent.com/Goblinzzzzzz/review-assistant-release/refs/heads/main/manifest.json"
 }
