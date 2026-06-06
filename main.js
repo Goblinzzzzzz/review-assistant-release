@@ -265,6 +265,7 @@ var MOMA_MANAGE_KEYS_URL = "https://moma.ke.com/manage-keys";
 var MOMA_DEFAULT_MODEL = "claude-4.6-sonnet";
 var ENABLE_LOCAL_VOICE_PLAYBACK = false;
 var REVIEW_ASSISTANT_COPYRIGHT = "\xA9\uFE0F\u60E0\u5C45\u5E73\u53F0\u4EBA\u529B\u884C\u653F\u4E2D\u5FC3-\u4F51\u9E9F";
+var REVIEW_ASSISTANT_UPDATE_MANIFEST_URL = "https://raw.githubusercontent.com/Goblinzzzzzz/review-assistant-release/main/update.json";
 function isBundledWhisperModelPath(modelPath) {
   if (!modelPath)
     return true;
@@ -292,7 +293,7 @@ var DEFAULT_SETTINGS = {
   questionStyle: "sharp",
   autoTranscribe: true,
   language: "zh",
-  updateManifestUrl: ""
+  updateManifestUrl: REVIEW_ASSISTANT_UPDATE_MANIFEST_URL
 };
 var SettingsManager = class {
   constructor(initialSettings, saveCallback) {
@@ -3756,9 +3757,9 @@ var ReviewAssistantSettingTab = class extends import_obsidian2.PluginSettingTab 
     const aboutCard = this.createSettingsCard(container, "关于", "插件版本、版权和在线升级。");
     new import_obsidian2.Setting(aboutCard).setName("述职助手").setDesc(`版本 ${this.plugin.manifest.version || "1.0.0"} | 基于《超越指标》方法论`);
     new import_obsidian2.Setting(aboutCard).setName("版权信息").setDesc(REVIEW_ASSISTANT_COPYRIGHT);
-    new import_obsidian2.Setting(aboutCard).setName("在线升级清单 URL").setDesc("升级清单 JSON 需包含 version、mainJsUrl、stylesCssUrl，可选 manifestUrl、notes。").addText(
-      (text) => text.setPlaceholder("https://example.com/review-assistant/update.json").setValue(settings.get("updateManifestUrl") || "").onChange(async (value) => {
-        await settings.set("updateManifestUrl", value.trim());
+    new import_obsidian2.Setting(aboutCard).setName("在线升级清单 URL").setDesc("默认使用 GitHub 更新源。升级清单 JSON 需包含 version、mainJsUrl、stylesCssUrl，可选 manifestUrl、notes。").addText(
+      (text) => text.setPlaceholder(REVIEW_ASSISTANT_UPDATE_MANIFEST_URL).setValue(settings.get("updateManifestUrl") || REVIEW_ASSISTANT_UPDATE_MANIFEST_URL).onChange(async (value) => {
+        await settings.set("updateManifestUrl", value.trim() || REVIEW_ASSISTANT_UPDATE_MANIFEST_URL);
       })
     );
     new import_obsidian2.Setting(aboutCard).setName("在线升级").setDesc("检查远端版本；安装前会备份当前 main.js、styles.css 和 manifest.json。").addButton(
@@ -4741,7 +4742,7 @@ var ReviewAssistantPlugin = class extends import_obsidian4.Plugin {
     return this.manifest.dir || `.obsidian/plugins/${this.manifest.id}`;
   }
   async fetchOnlineUpdateManifest() {
-    const url = this.settingsManager.get("updateManifestUrl");
+    const url = this.settingsManager.get("updateManifestUrl") || REVIEW_ASSISTANT_UPDATE_MANIFEST_URL;
     if (!url || !url.trim()) {
       throw new Error("\u8BF7\u5148\u914D\u7F6E\u5728\u7EBF\u5347\u7EA7\u6E05\u5355 URL");
     }
