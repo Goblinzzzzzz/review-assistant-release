@@ -91,6 +91,99 @@ function generateId() {
 function sanitizeFileName(name) {
   return (name || "\u672A\u547D\u540D").replace(/[\\/:*?"<>|]/g, "_").trim() || "\u672A\u547D\u540D";
 }
+function getEvaluationDimensionItems(evaluation) {
+  return [
+    { key: "indicatorQuality", label: "\u6307\u6807\u8D28\u91CF", score: evaluation.dimensions.indicatorQuality.score, max: 20, comment: evaluation.dimensions.indicatorQuality.comment },
+    { key: "processManagement", label: "\u8FC7\u7A0B\u7BA1\u7406", score: evaluation.dimensions.processManagement.score, max: 25, comment: evaluation.dimensions.processManagement.comment },
+    { key: "technicalControl", label: "\u6280\u63A7\u80FD\u529B", score: evaluation.dimensions.technicalControl.score, max: 25, comment: evaluation.dimensions.technicalControl.comment },
+    { key: "pdcaClosure", label: "\u7EE9\u6548\u95ED\u73AF", score: evaluation.dimensions.pdcaClosure.score, max: 20, comment: evaluation.dimensions.pdcaClosure.comment },
+    { key: "effectCostRatio", label: "\u6210\u6548\u4EE3\u4EF7", score: evaluation.dimensions.effectCostRatio.score, max: 10, comment: evaluation.dimensions.effectCostRatio.comment }
+  ];
+}
+function buildEvaluationSummaryText(evaluation) {
+  const dimensions2 = getEvaluationDimensionItems(evaluation);
+  const weakest = [...dimensions2].sort((a, b) => a.score / a.max - b.score / b.max).slice(0, 2);
+  const coreProblems = (evaluation.improvements || []).slice(0, 2).map((item) => `${item.weakness}\uFF1A${item.currentStatus || item.suggestion || "\u9700\u7EE7\u7EED\u8DDF\u8FDB"}`);
+  const focusItems = [
+    ...weakest.map((item) => `${item.label}\uFF08${item.score}/${item.max}\uFF09`),
+    ...(evaluation.improvements || []).slice(0, 2).map((item) => item.suggestion).filter(Boolean)
+  ].slice(0, 4);
+  return `\u672C\u6B21\u8FF0\u804C\u8BC4\u4EF7\u5B8C\u6210\uFF1A\u603B\u5206 ${evaluation.totalScore}/100\uFF0C\u7B49\u7EA7 ${evaluation.grade}\u3002
+
+\u6838\u5FC3\u95EE\u9898\uFF1A
+${coreProblems.length ? coreProblems.map((item) => `- ${item}`).join("\n") : `- ${evaluation.summary || "\u6682\u65E0\u660E\u663E\u95EE\u9898\uFF0C\u4F46\u4ECD\u9700\u4FDD\u6301\u8FC7\u7A0B\u590D\u76D8\u3002"}`}
+
+\u63A5\u4E0B\u6765\u8981\u5173\u6CE8\uFF1A
+${focusItems.length ? focusItems.map((item) => `- ${item}`).join("\n") : "- \u6301\u7EED\u8DDF\u8E2A\u627F\u8BFA\u4E8B\u9879\u3001\u5173\u952E\u6307\u6807\u548C\u8FC7\u7A0B\u52A8\u4F5C\u7684\u95ED\u73AF\u843D\u5730\u3002"}
+
+\u603B\u7ED3\uFF1A${evaluation.summary || "\u8BF7\u7ED3\u5408\u8BC4\u4EF7\u62A5\u544A\u7EE7\u7EED\u590D\u76D8\u3002"}`;
+}
+function buildEvaluationRadarSvg(evaluation) {
+  const items = getEvaluationDimensionItems(evaluation);
+  const size = 520;
+  const center = size / 2;
+  const radius = 150;
+  const angleOffset = -Math.PI / 2;
+  const pointFor = (index, ratio) => {
+    const angle = angleOffset + index / items.length * Math.PI * 2;
+    const distance = radius * ratio;
+    return {
+      x: center + Math.cos(angle) * distance,
+      y: center + Math.sin(angle) * distance
+    };
+  };
+  const polygon = (ratio) => items.map((_, index) => {
+    const point = pointFor(index, ratio);
+    return `${point.x.toFixed(1)},${point.y.toFixed(1)}`;
+  }).join(" ");
+  const scorePoints = items.map((item, index) => {
+    const point = pointFor(index, Math.max(0, Math.min(1, item.score / item.max)));
+    return `${point.x.toFixed(1)},${point.y.toFixed(1)}`;
+  }).join(" ");
+  const axes = items.map((_, index) => {
+    const point = pointFor(index, 1);
+    return `<line x1="${center}" y1="${center}" x2="${point.x.toFixed(1)}" y2="${point.y.toFixed(1)}" stroke="#d8dee9" stroke-width="1"/>`;
+  }).join("\n");
+  const labels = items.map((item, index) => {
+    const point = pointFor(index, 1.22);
+    const anchor = point.x < center - 20 ? "end" : point.x > center + 20 ? "start" : "middle";
+    const ratio = Math.round(item.score / item.max * 100);
+    return `<text x="${point.x.toFixed(1)}" y="${point.y.toFixed(1)}" text-anchor="${anchor}" dominant-baseline="middle" fill="#2f3437" font-size="14" font-weight="700">${item.label}</text>
+<text x="${point.x.toFixed(1)}" y="${(point.y + 18).toFixed(1)}" text-anchor="${anchor}" dominant-baseline="middle" fill="#d97757" font-size="12" font-weight="700">${item.score}/${item.max} · ${ratio}%</text>`;
+  }).join("\n");
+  const rings = [0.2, 0.4, 0.6, 0.8, 1].map((ratio, index) => `<polygon points="${polygon(ratio)}" fill="none" stroke="${index === 4 ? "#c4ccd6" : "#e4e8ee"}" stroke-width="${index === 4 ? 1.5 : 1}"/>`).join("\n");
+  return `<svg width="720" height="560" viewBox="0 0 720 560" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="五维度评价雷达图">
+  <defs>
+    <linearGradient id="radarBg" x1="0" x2="1" y1="0" y2="1">
+      <stop offset="0%" stop-color="#fff7ed"/>
+      <stop offset="55%" stop-color="#ffffff"/>
+      <stop offset="100%" stop-color="#eef6ff"/>
+    </linearGradient>
+    <linearGradient id="radarFill" x1="0" x2="1" y1="0" y2="1">
+      <stop offset="0%" stop-color="#d97757" stop-opacity="0.55"/>
+      <stop offset="100%" stop-color="#4f8fba" stop-opacity="0.38"/>
+    </linearGradient>
+    <filter id="radarShadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="12" stdDeviation="14" flood-color="#8b5e4a" flood-opacity="0.16"/>
+    </filter>
+  </defs>
+  <rect x="18" y="18" width="684" height="524" rx="22" fill="url(#radarBg)" stroke="#e5e7eb"/>
+  <text x="48" y="58" fill="#1f2937" font-size="22" font-weight="800">五维度能力雷达图</text>
+  <text x="48" y="84" fill="#6b7280" font-size="13">总分 ${evaluation.totalScore}/100 · 等级 ${evaluation.grade}</text>
+  <g transform="translate(100, 18)" filter="url(#radarShadow)">
+    <circle cx="${center}" cy="${center}" r="${radius + 34}" fill="#ffffff" opacity="0.72"/>
+    ${rings}
+    ${axes}
+    <polygon points="${scorePoints}" fill="url(#radarFill)" stroke="#d97757" stroke-width="3" stroke-linejoin="round"/>
+    ${items.map((item, index) => {
+    const point = pointFor(index, Math.max(0, Math.min(1, item.score / item.max)));
+    return `<circle cx="${point.x.toFixed(1)}" cy="${point.y.toFixed(1)}" r="5.5" fill="#ffffff" stroke="#d97757" stroke-width="3"/>`;
+  }).join("\n")}
+    <circle cx="${center}" cy="${center}" r="4" fill="#d97757"/>
+    ${labels}
+  </g>
+</svg>`;
+}
 
 // src/core/SettingsManager.ts
 var home = process.env.HOME || "";
@@ -3097,6 +3190,10 @@ createdAt: ${(/* @__PURE__ */ new Date()).toISOString()}
 - \u5468\u671F\uFF1A${week}
 - \u6750\u6599\u6765\u6E90\uFF1A${sourceFilePath || "\u672A\u8BB0\u5F55"}
 
+## \u8BC4\u4EF7\u6982\u89C8
+
+${buildEvaluationRadarSvg(evaluation)}
+
 ${this.formatEvaluationSection(evaluation).trim()}
 `;
     const existing = this.app.vault.getAbstractFileByPath(filePath);
@@ -3881,12 +3978,35 @@ var ReviewPanelView = class extends import_obsidian3.ItemView {
     this.messagesEl.createDiv({ cls: `review-message-row ${message.role}` }, (row) => {
       row.createDiv({ cls: "review-avatar", text: message.role === "assistant" ? "AI" : "\u4EBA" });
       row.createDiv({ cls: "review-message-content" }, (content) => {
-        content.createDiv({ cls: "review-message-meta", text: message.role === "assistant" ? "AI\u8FFD\u95EE" : "\u8FF0\u804C\u56DE\u7B54" });
+        content.createDiv({ cls: "review-message-meta" }, (meta) => {
+          meta.createSpan({ text: message.role === "assistant" ? message.type === "evaluation-summary" ? "AI\u603B\u7ED3" : "AI\u8FFD\u95EE" : "\u8FF0\u804C\u56DE\u7B54" });
+          if (message.role === "assistant") {
+            const speak = meta.createEl("button", { cls: "review-speak-btn", text: "\u64AD\u653E" });
+            speak.title = "\u4F7F\u7528\u672C\u5730\u7CFB\u7EDF\u8BED\u97F3\u64AD\u653E\uFF0C\u4E0D\u4EA7\u751F\u989D\u5916\u8D39\u7528";
+            speak.addEventListener("click", () => this.speakMessage(message.content));
+          }
+        });
         content.createDiv({ cls: "review-message-bubble", text: message.content });
       });
     });
     if (scroll)
       this.scrollToBottom();
+  }
+  speakMessage(text) {
+    if (typeof window === "undefined" || !window.speechSynthesis || typeof SpeechSynthesisUtterance === "undefined") {
+      new import_obsidian3.Notice("\u5F53\u524D\u73AF\u5883\u4E0D\u652F\u6301\u672C\u5730\u8BED\u97F3\u64AD\u653E");
+      return;
+    }
+    window.speechSynthesis.cancel();
+    const utterance = new SpeechSynthesisUtterance(text.replace(/\*\*/g, "").replace(/^[-#]\s?/gm, ""));
+    utterance.lang = "zh-CN";
+    utterance.rate = 1;
+    utterance.pitch = 1;
+    const voices = window.speechSynthesis.getVoices();
+    const preferredVoice = voices.find((voice) => /zh|Chinese|中文|普通话|Mandarin/i.test(`${voice.lang} ${voice.name}`));
+    if (preferredVoice)
+      utterance.voice = preferredVoice;
+    window.speechSynthesis.speak(utterance);
   }
   renderInput(container) {
     container.createDiv({ cls: "review-input-panel" }, (panel) => {
@@ -4378,6 +4498,15 @@ var ReviewPanelView = class extends import_obsidian3.ItemView {
         await this.plugin.getDataService().saveEvaluation(this.activeItem.file.path, evaluation);
         await this.plugin.getDataService().saveEvaluationReport(this.activeMaterial, evaluation, this.activeItem.file.path);
       }
+      const summaryMessage = {
+        id: Date.now().toString(36),
+        timestamp: (/* @__PURE__ */ new Date()).toISOString(),
+        role: "assistant",
+        content: buildEvaluationSummaryText(evaluation),
+        type: "evaluation-summary"
+      };
+      this.conversationHistory.push(summaryMessage);
+      await this.saveConversation();
       this.activeItem.status = "done";
       this.activeItem.score = evaluation.totalScore;
       this.activeItem.grade = evaluation.grade;

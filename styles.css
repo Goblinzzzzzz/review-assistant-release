@@ -462,13 +462,34 @@
 }
 
 .review-message-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
   font-size: 10px;
   color: var(--text-faint);
   margin-bottom: 4px;
 }
 
 .review-message-row.user .review-message-meta {
+  justify-content: flex-end;
   text-align: right;
+}
+
+.review-speak-btn {
+  border: 1px solid var(--review-border);
+  border-radius: 999px;
+  background: var(--background-primary);
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 10px;
+  line-height: 1;
+  padding: 3px 7px;
+}
+
+.review-speak-btn:hover {
+  color: var(--text-normal);
+  background: var(--review-hover);
 }
 
 .review-message-bubble {
