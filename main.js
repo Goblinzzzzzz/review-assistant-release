@@ -295,6 +295,114 @@ function normalizeMomaApiBaseUrl(baseUrl) {
   const trimmed = (baseUrl || MOMA_API_BASE_URL).replace(/\/+$/u, "");
   return trimmed.endsWith("/api") ? trimmed : `${trimmed}/api`;
 }
+function getMomaOsInfo() {
+  try {
+    const os = require("os");
+    const typeMap = {
+      Darwin: "macOS",
+      Windows_NT: "Windows",
+      Linux: "Linux"
+    };
+    return {
+      name: typeMap[os.type()] || os.type(),
+      version: os.release()
+    };
+  } catch (e) {
+    return { name: "Unknown", version: "unknown" };
+  }
+}
+function buildMomaPluginHeaders(meta = {}) {
+  const os = getMomaOsInfo();
+  const headers = {
+    "X-Platform": `${os.name} ${os.version}`,
+    "X-Plugin-Env": MOMA_PLUGIN_ENV
+  };
+  if (meta.pluginVersion) {
+    headers["X-Plugin-Version"] = meta.pluginVersion;
+  }
+  if (meta.obsidianVersion) {
+    headers["X-OB-Version"] = meta.obsidianVersion;
+  }
+  return headers;
+}
+function buildMomaModelHeaders(token, meta = {}, accessToken = "") {
+  const trimmed = (token || "").trim();
+  const headers = {
+    ...buildMomaPluginHeaders(meta),
+    "X-Request-Source": "claude",
+    "Accept": "text/event-stream",
+    "X-Api-Key": trimmed,
+    "Authorization": `Bearer ${trimmed}`,
+    "anthropic-version": "2023-06-01"
+  };
+  if (accessToken && accessToken.trim()) {
+    headers["X-Plugin-Auth"] = `Bearer ${accessToken.trim()}`;
+  }
+  return headers;
+}
+function isMomaCredentialErrno(errno) {
+  return errno === MOMA_ERRNO_ACCESS_TOKEN_EXPIRED || errno === MOMA_ERRNO_REFRESH_TOKEN_EXPIRED;
+}
+function parseMomaErrno(rawText) {
+  try {
+    const payload = JSON.parse(rawText);
+    return typeof payload.errno === "number" ? payload.errno : null;
+  } catch (e) {
+    return null;
+  }
+}
+function parseMomaEnvironmentVariables(envText) {
+  const values = {};
+  for (const line of String(envText || "").split(/\r?\n/)) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith("#")) {
+      continue;
+    }
+    const match = trimmed.match(/^([A-Za-z_][A-Za-z0-9_]*)=(.*)$/);
+    if (!match) {
+      continue;
+    }
+    values[match[1]] = match[2].replace(/^["']|["']$/g, "").trim();
+  }
+  return values;
+}
+function resolveMomaBaseUrl(settings = {}) {
+  const customUrl = String(settings.backendCustomUrl || "").trim().replace(/\/+$/, "");
+  if (settings.backendEnv === "custom" && customUrl) {
+    return customUrl.endsWith("/api") ? customUrl : `${customUrl}/api`;
+  }
+  return MOMA_API_BASE_URL;
+}
+function resolveMomaModel(settings = {}) {
+  const claudeProvider = settings.providerConfigs && settings.providerConfigs.claude || {};
+  const env = parseMomaEnvironmentVariables(claudeProvider.environmentVariables || settings.sharedEnvironmentVariables || "");
+  return env.ANTHROPIC_MODEL || MOMA_DEFAULT_MODEL;
+}
+async function readMomaSharedSettings(adapter) {
+  if (!adapter) {
+    return { path: MOMA_SETTINGS_PATH, settings: {} };
+  }
+  for (const path of [MOMA_SETTINGS_PATH, ...LEGACY_MOMA_SETTINGS_PATHS]) {
+    try {
+      if (await adapter.exists(path)) {
+        const text = await adapter.read(path);
+        return { path: MOMA_SETTINGS_PATH, settings: JSON.parse(text || "{}") };
+      }
+    } catch (e) {
+    }
+  }
+  return { path: MOMA_SETTINGS_PATH, settings: {} };
+}
+async function resolveMomaRuntimeConfig(adapter, fallbackToken = "") {
+  const { settings } = await readMomaSharedSettings(adapter);
+  return {
+    token: String(settings.onesToken || fallbackToken || "").trim(),
+    baseURL: resolveMomaBaseUrl(settings),
+    model: resolveMomaModel(settings),
+    hasSharedSettings: Boolean(settings.onesToken || settings.accessToken || settings.refreshToken),
+    sourcePath: MOMA_SETTINGS_PATH
+  };
+}
 async function validateMomaApiKey(token, baseUrl = MOMA_API_BASE_URL) {
   const trimmed = (token || "").trim();
   if (!trimmed)
@@ -305,7 +413,7 @@ async function validateMomaApiKey(token, baseUrl = MOMA_API_BASE_URL) {
   try {
     const response = await fetchImpl(`${normalizeMomaApiBaseUrl(baseUrl)}/token/verify`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { ...buildMomaPluginHeaders(), "Content-Type": "application/json" },
       body: JSON.stringify({ token: trimmed })
     });
     if (!response.ok)
@@ -381,8 +489,16 @@ var TENCENT_TTS_MAX_CHARS = 500;
 var HOMEBREW_INSTALL_COMMAND = `/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"`;
 var BREW_INSTALL_DEPENDENCIES_COMMAND = "brew update && brew install whisper-cpp ffmpeg";
 var MOMA_API_BASE_URL = "https://next.ke.com/ob/api";
-var MOMA_MANAGE_KEYS_URL = "https://moma.ke.com/manage-keys";
+var MOMA_PLUGIN_ENV = "prod";
+var MOMA_MANAGE_KEYS_URL = "https://moma.ke.com/platform-api-keys";
 var MOMA_DEFAULT_MODEL = "claude-4.6-sonnet";
+var MOMA_SETTINGS_PATH = ".moma/moma-settings.json";
+var LEGACY_MOMA_SETTINGS_PATHS = [".claudian/moma-settings.json", ".claude/moma-settings.json"];
+var MOMA_AUTH_CREDENTIAL_CREATE_PATH = "/auth/credential/create";
+var MOMA_AUTH_CREDENTIAL_REFRESH_PATH = "/auth/credential/refresh";
+var MOMA_CREDENTIAL_EXPIRY_BUFFER_MS = 8 * 60 * 1e3;
+var MOMA_ERRNO_ACCESS_TOKEN_EXPIRED = 7001;
+var MOMA_ERRNO_REFRESH_TOKEN_EXPIRED = 7002;
 var REVIEW_ASSISTANT_PLUGIN_NAME = "惠居业务汇报管理";
 var REVIEW_ASSISTANT_WORKBENCH_TITLE = "惠居业务汇报工作台";
 var REVIEW_ASSISTANT_COPYRIGHT = "\xA9\uFE0F\u60E0\u5C45\u5E73\u53F0\u4EBA\u529B\u884C\u653F\u4E2D\u5FC3-\u4F51\u9E9F";
@@ -662,11 +778,18 @@ var SettingsManager = class {
     return this.settings[key];
   }
   getAll() {
-    return { ...this.settings };
+    const data = { ...this.settings };
+    delete data.claudeApiKey;
+    delete data.claudeApiBaseUrl;
+    delete data.claudeModel;
+    return data;
   }
   async set(key, value) {
     this.settings[key] = value;
     await this.saveCallback();
+  }
+  setTransient(key, value) {
+    this.settings[key] = value;
   }
   async update(partial) {
     this.settings = { ...this.settings, ...partial };
@@ -3001,14 +3124,142 @@ ${normalizedModel.dimensions.map((item) => `    "${item.key}": { "score": ${Math
 }
 
 // src/services/AIService.ts
+var MomaCredentialService = class {
+  constructor(adapter, meta = {}) {
+    this.adapter = adapter;
+    this.meta = meta;
+    this.inflight = null;
+    this.lastOnesToken = "";
+  }
+  setMeta(meta) {
+    this.meta = meta || {};
+  }
+  async ensureAccessToken(onesToken, forceRefresh = false) {
+    if (!this.adapter) {
+      return "";
+    }
+    if (this.inflight) {
+      return this.inflight;
+    }
+    this.inflight = this.ensureAccessTokenInternal(onesToken, forceRefresh).finally(() => {
+      this.inflight = null;
+    });
+    return this.inflight;
+  }
+  async ensureAccessTokenInternal(onesToken, forceRefresh) {
+    const { settings, path } = await this.loadSettings();
+    const token = (settings.onesToken || onesToken || "").trim();
+    this.lastOnesToken = token;
+    const now = Date.now();
+    const accessToken = String(settings.accessToken || "");
+    const refreshToken = String(settings.refreshToken || "");
+    const accessExpiresAt = Number(settings.accessExpiresAt || 0);
+    const refreshExpiresAt = Number(settings.refreshExpiresAt || 0);
+    if (!forceRefresh && accessToken && accessExpiresAt && now < accessExpiresAt - MOMA_CREDENTIAL_EXPIRY_BUFFER_MS) {
+      return accessToken;
+    }
+    if (refreshToken && refreshExpiresAt && now < refreshExpiresAt - MOMA_CREDENTIAL_EXPIRY_BUFFER_MS) {
+      try {
+        return await this.refreshCredential(path, settings, token, refreshToken);
+      } catch (e) {
+        return await this.createCredential(path, settings, token);
+      }
+    }
+    return await this.createCredential(path, settings, token);
+  }
+  getResolvedToken(fallbackToken) {
+    return this.lastOnesToken || fallbackToken || "";
+  }
+  async loadSettings() {
+    return await readMomaSharedSettings(this.adapter);
+  }
+  async saveSettings(path, settings, data, onesToken) {
+    const next = {
+      ...settings,
+      onesToken: settings.onesToken || onesToken,
+      backendEnv: settings.backendEnv || "prod",
+      pluginEnv: settings.pluginEnv || MOMA_PLUGIN_ENV,
+      accessToken: data.accessToken,
+      refreshToken: data.refreshToken,
+      accessExpiresAt: data.accessExpiresAt,
+      refreshExpiresAt: data.refreshExpiresAt
+    };
+    try {
+      await this.adapter.mkdir(".moma");
+    } catch (e) {
+    }
+    await this.adapter.write(path, JSON.stringify(next, null, 2));
+  }
+  async createCredential(path, settings, onesToken) {
+    const token = (onesToken || "").trim();
+    if (!token) {
+      return "";
+    }
+    const payload = await this.callCredentialApi(`${MOMA_API_BASE_URL}${MOMA_AUTH_CREDENTIAL_CREATE_PATH}`, {
+      method: "POST",
+      headers: { ...buildMomaPluginHeaders(this.meta), Authorization: `Bearer ${token}` }
+    });
+    await this.saveSettings(path, settings, payload.data || {}, token);
+    return payload.data.accessToken || "";
+  }
+  async refreshCredential(path, settings, onesToken, refreshToken) {
+    const token = (onesToken || "").trim();
+    const payload = await this.callCredentialApi(`${MOMA_API_BASE_URL}${MOMA_AUTH_CREDENTIAL_REFRESH_PATH}`, {
+      method: "POST",
+      headers: { ...buildMomaPluginHeaders(this.meta), Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ refreshToken })
+    });
+    await this.saveSettings(path, settings, payload.data || {}, token);
+    return payload.data.accessToken || "";
+  }
+  async callCredentialApi(url, init) {
+    const fetchImpl = typeof globalThis !== "undefined" ? globalThis.fetch : void 0;
+    if (!fetchImpl) {
+      throw new Error("\u5F53\u524D\u73AF\u5883\u4E0D\u652F\u6301 Moma \u51ED\u8BC1\u8BF7\u6C42");
+    }
+    const response = await fetchImpl(url, init);
+    const text = await response.text();
+    if (!response.ok) {
+      throw new Error(text.slice(0, 300) || `HTTP ${response.status}`);
+    }
+    const payload = JSON.parse(text);
+    if (payload.errno !== 0 || !payload.data || !payload.data.accessToken) {
+      throw new Error((payload && payload.error) || "\u83B7\u53D6 Moma \u51ED\u8BC1\u5931\u8D25");
+    }
+    return payload;
+  }
+};
 var AIService = class {
   constructor() {
     this.client = null;
     this.apiKey = "";
     this.baseURL = MOMA_API_BASE_URL;
     this.model = MOMA_DEFAULT_MODEL;
+    this.meta = {};
+    this.credentialService = null;
     this.questionStyle = "sharp";
     this.evaluationModel = DEFAULT_EVALUATION_MODEL;
+  }
+  setMeta(meta) {
+    this.meta = meta || {};
+    if (this.credentialService) {
+      this.credentialService.setMeta(this.meta);
+    }
+  }
+  setCredentialAdapter(adapter) {
+    this.credentialService = new MomaCredentialService(adapter, this.meta);
+  }
+  async resolveRuntimeConfig() {
+    const config = await resolveMomaRuntimeConfig(this.credentialService ? this.credentialService.adapter : null, "");
+    if (config.token) {
+      this.apiKey = config.token;
+    } else {
+      this.apiKey = "";
+      this.client = null;
+    }
+    this.baseURL = (config.baseURL || MOMA_API_BASE_URL).replace(/\/+$/, "");
+    this.model = config.model || MOMA_DEFAULT_MODEL;
+    return config;
   }
   setApiKey(apiKey, baseURL, model) {
     if (!apiKey || !apiKey.trim()) {
@@ -3022,7 +3273,7 @@ var AIService = class {
       apiKey: this.apiKey,
       authToken: this.apiKey,
       baseURL: this.baseURL,
-      defaultHeaders: { Authorization: `Bearer ${this.apiKey}` },
+      defaultHeaders: buildMomaModelHeaders(this.apiKey, this.meta),
       dangerouslyAllowBrowser: true
     });
     if (model) {
@@ -3081,19 +3332,25 @@ var AIService = class {
     return chunks.join("").trim();
   }
   async createMessageText({ system, messages, max_tokens }) {
+    await this.resolveRuntimeConfig();
+    if (!this.client && this.apiKey.trim()) {
+      this.setApiKey(this.apiKey, this.baseURL, this.model);
+    }
     if (!this.isReady()) {
-      throw new Error("\u8BF7\u5148\u914D\u7F6E Claude API Key");
+      throw new Error("\u8BF7\u5148\u5728 Moma \u63D2\u4EF6\u4E2D\u5B8C\u6210 API Key \u9A8C\u8BC1");
     }
     const fetchImpl = typeof globalThis !== "undefined" ? globalThis.fetch : void 0;
     if (!fetchImpl) {
       throw new Error("\u5F53\u524D\u73AF\u5883\u4E0D\u652F\u6301 AI \u7F51\u7EDC\u8BF7\u6C42");
     }
-    const response = await fetchImpl(`${this.baseURL}/v1/messages`, {
+    const requestMessage = async (forceRefresh = false) => {
+      const accessToken = this.credentialService ? await this.credentialService.ensureAccessToken(this.apiKey, forceRefresh) : "";
+      const requestToken = this.credentialService ? this.credentialService.getResolvedToken(this.apiKey) : this.apiKey;
+      return await fetchImpl(`${this.baseURL}/v1/messages`, {
       method: "POST",
       headers: {
+        ...buildMomaModelHeaders(requestToken, this.meta, accessToken),
         "Content-Type": "application/json",
-        "Authorization": `Bearer ${this.apiKey}`,
-        "anthropic-version": "2023-06-01"
       },
       body: JSON.stringify({
         model: this.model,
@@ -3101,8 +3358,14 @@ var AIService = class {
         ...system ? { system } : {},
         messages
       })
-    });
-    const rawText = await response.text();
+      });
+    };
+    let response = await requestMessage(false);
+    let rawText = await response.text();
+    if (!response.ok && isMomaCredentialErrno(parseMomaErrno(rawText))) {
+      response = await requestMessage(true);
+      rawText = await response.text();
+    }
     if (!response.ok) {
       throw new Error(rawText.slice(0, 300) || `HTTP ${response.status}`);
     }
@@ -3141,9 +3404,6 @@ var AIService = class {
    * 生成追问
    */
   async generateQuestion(material, conversationHistory, latestAnswer) {
-    if (!this.client) {
-      throw new Error("\u8BF7\u5148\u914D\u7F6E Claude API Key");
-    }
     const systemPrompt = getQuestionPrompt(material, this.questionStyle);
     const messages = this.buildQuestionMessages(conversationHistory, latestAnswer);
     const reply = await this.createMessageText({
@@ -3166,9 +3426,6 @@ var AIService = class {
    * 生成初始提问
    */
   async generateInitialQuestions(material) {
-    if (!this.client) {
-      throw new Error("\u8BF7\u5148\u914D\u7F6E Claude API Key");
-    }
     const prompt = `\u57FA\u4E8E\u4EE5\u4E0B\u8FF0\u804C\u6750\u6599\uFF0C\u751F\u62103-5\u4E2A\u7280\u5229\u7684\u8FFD\u95EE\u95EE\u9898\u3002
 
 \u8FF0\u804C\u4EBA\uFF1A${material.userName}
@@ -3205,9 +3462,6 @@ ${material.actions.map((a) => `- [${a.priority}] ${a.action}`).join("\n") || "\u
    * 生成五维度评价
    */
   async generateEvaluation(material, conversationHistory) {
-    if (!this.client) {
-      throw new Error("\u8BF7\u5148\u914D\u7F6E Claude API Key");
-    }
     const prompt = getEvaluationPrompt(material, conversationHistory, this.evaluationModel);
     const text = await this.createMessageText({
       max_tokens: 4e3,
@@ -3253,9 +3507,6 @@ ${material.actions.map((a) => `- [${a.priority}] ${a.action}`).join("\n") || "\u
    * 检测材料质量
    */
   async detectMaterialQuality(material) {
-    if (!this.client) {
-      throw new Error("\u8BF7\u5148\u914D\u7F6E Claude API Key");
-    }
     const prompt = `\u68C0\u6D4B\u4EE5\u4E0B\u8FF0\u804C\u6750\u6599\u7684\u8D28\u91CF\uFF0C\u6309\u7167\u4E94\u7EF4\u5EA6\u8BC4\u4EF7\u6A21\u578B\u3002
 
 \u8FF0\u804C\u6750\u6599\uFF1A
@@ -4258,47 +4509,20 @@ var ReviewAssistantSettingTab = class extends import_obsidian2.PluginSettingTab 
     return card.createDiv({ cls: "review-settings-card-body" });
   }
   async renderModelSettings(container, settings) {
-    const aiCard = this.createSettingsCard(container, "AI 配置", "使用与 Moma 相同的 API Key、网关和默认模型。");
-    const hasKey = settings.get("claudeApiKey").trim().length > 0;
-    new import_obsidian2.Setting(aiCard).setName(hasKey ? "已配置 Moma API Key" : "未配置 Moma API Key").setDesc(hasKey ? "当前已保存 API Key。可在此更新或清除。" : "请先申请并填写 Moma API Key，保存后即可使用 AI 提问、追问和评价。").addButton(
-      (btn) => btn.setButtonText("申请/管理 Key").onClick(() => openMomaManageKeys())
-    );
-    new import_obsidian2.Setting(aiCard).setName("Moma API Key").setDesc("与 Moma 插件使用同一套 Key。").addText(
-      (text) => {
-        text.inputEl.type = "password";
-        text.setPlaceholder("粘贴 Moma API Key").setValue(settings.get("claudeApiKey")).onChange(async (value) => {
-          await settings.set("claudeApiKey", value.trim());
-          this.updateAIService();
-        });
-      }
+    const aiCard = this.createSettingsCard(container, "AI 配置", "此插件不再单独保存 AI 网关和模型，始终优先使用 Moma 当前配置。");
+    const config = await resolveMomaRuntimeConfig(this.plugin.app.vault.adapter, "");
+    const hasKey = config.token.trim().length > 0;
+    new import_obsidian2.Setting(aiCard).setName(hasKey ? "使用 Moma 当前配置" : "未检测到 Moma 配置").setDesc(hasKey ? "AI Key、短期凭证、网关和模型均从 Moma 共享配置读取。" : "请先在 Moma 插件中完成 API Key 验证。").addButton(
+      (btn) => btn.setButtonText("打开 Moma Key 管理").onClick(() => openMomaManageKeys())
     ).addButton(
-      (btn) => btn.setButtonText("验证并保存").setCta().onClick(async () => {
-        const ok = await validateMomaApiKey(settings.get("claudeApiKey"), MOMA_API_BASE_URL);
-        if (!ok) {
-          new import_obsidian2.Notice("Moma API Key 验证失败，请检查 Key 或网络");
-          return;
-        }
-        await settings.update({
-          claudeApiBaseUrl: MOMA_API_BASE_URL,
-          claudeModel: MOMA_DEFAULT_MODEL
-        });
-        this.updateAIService();
+      (btn) => btn.setButtonText("重新检测").setCta().onClick(async () => {
+        const nextConfig = await this.plugin.syncMomaRuntimeConfig();
         this.display();
-        new import_obsidian2.Notice("Moma API Key 验证通过，AI 已就绪");
+        new import_obsidian2.Notice(nextConfig.token ? "已同步 Moma 当前 AI 配置" : "未检测到 Moma API Key，请先在 Moma 中完成验证");
       })
     );
-    const presetsDiv = aiCard.createDiv("presets-container");
-    new import_obsidian2.Setting(presetsDiv).setName("当前模型").setDesc(`Moma 网关：${MOMA_DEFAULT_MODEL}`).addButton(
-      (btn) => btn.setButtonText("恢复默认").onClick(async () => {
-        await settings.update({
-          claudeApiBaseUrl: MOMA_API_BASE_URL,
-          claudeModel: MOMA_DEFAULT_MODEL
-        });
-        this.updateAIService();
-        this.display();
-        new import_obsidian2.Notice("已切换到 Moma 默认配置");
-      })
-    );
+    new import_obsidian2.Setting(aiCard).setName("当前网关").setDesc(config.baseURL || MOMA_API_BASE_URL);
+    new import_obsidian2.Setting(aiCard).setName("当前模型").setDesc(config.model || MOMA_DEFAULT_MODEL);
 
     const speechCard = this.createSettingsCard(container, "语音识别配置", "可选择本地 Whisper、通用 HTTP 接口或腾讯云实时语音转写。");
     const speechProvider = normalizeSpeechRecognitionProvider(settings.get("whisperApiType"));
@@ -4695,14 +4919,7 @@ var ReviewAssistantSettingTab = class extends import_obsidian2.PluginSettingTab 
   }
   updateAIService() {
     const settings = this.plugin.getSettingsManager();
-    const apiKey = settings.get("claudeApiKey");
-    const baseUrl = settings.get("claudeApiBaseUrl");
-    const model = settings.get("claudeModel");
-    if (apiKey && apiKey.trim()) {
-      this.plugin.getAIService().setApiKey(apiKey, baseUrl, model);
-    } else {
-      this.plugin.getAIService().clearApiKey();
-    }
+    void this.plugin.syncMomaRuntimeConfig();
     this.plugin.getAIService().setQuestionStyle(settings.get("questionStyle"));
     this.plugin.getAIService().setEvaluationModel(settings.get("evaluationModel"));
   }
@@ -4879,40 +5096,25 @@ var ReviewPanelView = class extends import_obsidian3.ItemView {
   renderApiKeySetup(container) {
     container.createDiv({ cls: "review-empty" }, (empty) => {
       empty.createDiv({ cls: "review-empty-icon", text: "\u26A0\uFE0F" });
-      empty.createDiv({ cls: "review-empty-title", text: "\u521D\u59CB\u5316\uFF1A\u914D\u7F6E Moma API Key" });
-      empty.createDiv({ cls: "review-empty-desc", text: "\u9996\u6B21\u4F7F\u7528\u9700\u8981\u5148\u5B8C\u6210 AI \u8BA4\u8BC1\uFF0C\u968F\u540E\u4F1A\u81EA\u52A8\u51C6\u5907\u672C\u5730\u8BED\u97F3\u8BC6\u522B\u73AF\u5883\u3002" });
-      let pendingKey = "";
-      const input = empty.createEl("input", {
-        cls: "review-api-key-input",
-        type: "password",
-        attr: { placeholder: "\u7C98\u8D34 Moma API Key" }
-      });
-      input.addEventListener("input", () => {
-        pendingKey = input.value.trim();
-      });
+      empty.createDiv({ cls: "review-empty-title", text: "\u521D\u59CB\u5316\uFF1A\u4F7F\u7528 Moma AI \u914D\u7F6E" });
+      empty.createDiv({ cls: "review-empty-desc", text: "\u8BF7\u5148\u5728 Moma \u63D2\u4EF6\u4E2D\u5B8C\u6210 API Key \u9A8C\u8BC1\u3002\u672C\u63D2\u4EF6\u4F1A\u76F4\u63A5\u8BFB\u53D6 Moma \u5F53\u524D\u7F51\u5173\u3001\u6A21\u578B\u548C\u77ED\u671F\u51ED\u8BC1\u3002" });
       empty.createDiv({ cls: "review-empty-actions" }, (actions) => {
-        const save = actions.createEl("button", { cls: "review-primary-btn", text: "\u9A8C\u8BC1\u5E76\u5F00\u59CB" });
-        save.addEventListener("click", async () => {
-          const ok = await validateMomaApiKey(pendingKey, MOMA_API_BASE_URL);
-          if (!ok) {
-            new import_obsidian3.Notice("Moma API Key 验证失败，请检查 Key 或网络");
+        const manage = actions.createEl("button", { cls: "review-secondary-btn", text: "\u6253\u5F00 Moma Key \u7BA1\u7406" });
+        manage.addEventListener("click", () => openMomaManageKeys());
+        const detect = actions.createEl("button", { cls: "review-primary-btn", text: "\u91CD\u65B0\u68C0\u6D4B Moma \u914D\u7F6E" });
+        detect.addEventListener("click", async () => {
+          const config = await this.plugin.syncMomaRuntimeConfig();
+          if (!config.token) {
+            new import_obsidian3.Notice("\u672A\u68C0\u6D4B\u5230 Moma API Key\uFF0C\u8BF7\u5148\u5728 Moma \u4E2D\u5B8C\u6210\u9A8C\u8BC1");
             return;
           }
-          await this.plugin.getSettingsManager().update({
-            claudeApiKey: pendingKey,
-            claudeApiBaseUrl: MOMA_API_BASE_URL,
-            claudeModel: MOMA_DEFAULT_MODEL
-          });
-          this.plugin.getAIService().setApiKey(pendingKey, MOMA_API_BASE_URL, MOMA_DEFAULT_MODEL);
-          new import_obsidian3.Notice("Moma API Key 验证通过，AI 已就绪");
+          new import_obsidian3.Notice("已同步 Moma 当前 AI 配置");
           this.voiceSetupAutoStarted = false;
           this.render();
           if (normalizeSpeechRecognitionProvider(this.plugin.getSettingsManager().get("whisperApiType")) === SPEECH_RECOGNITION_PROVIDER_LOCAL) {
             await this.runVoiceSetup();
           }
         });
-        const manage = actions.createEl("button", { cls: "review-secondary-btn", text: "\u7533\u8BF7/\u7BA1\u7406 Key" });
-        manage.addEventListener("click", () => openMomaManageKeys());
         const settings = actions.createEl("button", { cls: "review-ghost-btn", text: "\u6253\u5F00\u8BBE\u7F6E" });
         settings.addEventListener("click", () => {
           this.app.setting.open();
@@ -6270,15 +6472,11 @@ var ReviewAssistantPlugin = class extends import_obsidian4.Plugin {
     );
     await this.syncVoiceSetupState();
     this.aiService = new AIService();
+    this.aiService.setMeta({ pluginVersion: this.manifest.version, obsidianVersion: import_obsidian4.apiVersion });
+    this.aiService.setCredentialAdapter(this.app.vault.adapter);
     this.aiService.setQuestionStyle(this.settingsManager.get("questionStyle"));
     this.aiService.setEvaluationModel(this.settingsManager.get("evaluationModel"));
-    if (this.settingsManager.get("claudeApiKey").trim()) {
-      this.aiService.setApiKey(
-        this.settingsManager.get("claudeApiKey"),
-        this.settingsManager.get("claudeApiBaseUrl"),
-        this.settingsManager.get("claudeModel")
-      );
-    }
+    await this.syncMomaRuntimeConfig();
     this.dataService = new DataService(
       this.app,
       this.settingsManager.get("storagePath") || DEFAULT_SETTINGS.storagePath
@@ -6304,6 +6502,17 @@ var ReviewAssistantPlugin = class extends import_obsidian4.Plugin {
     } catch (error) {
       console.error("\u8FF0\u804C\u52A9\u624B\u8BED\u97F3\u73AF\u5883\u68C0\u6D4B\u5931\u8D25", error);
     }
+  }
+  async syncMomaRuntimeConfig() {
+    const config = await resolveMomaRuntimeConfig(this.app.vault.adapter, "");
+    if (config.token) {
+      this.settingsManager.setTransient("claudeApiKey", config.token);
+      this.aiService.setApiKey(config.token, config.baseURL, config.model);
+    } else {
+      this.settingsManager.setTransient("claudeApiKey", "");
+      this.aiService.clearApiKey();
+    }
+    return config;
   }
   async loadPluginStyles() {
     try {

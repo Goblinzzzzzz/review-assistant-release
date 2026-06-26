@@ -1,6 +1,6 @@
 {
-  "version": "1.1.1",
-  "notes": "新增语音播报服务配置，支持本地系统语音和腾讯云实时语音合成；继续保留腾讯云实时语音转写、本地 Whisper 初始化和在线升级能力。",
+  "version": "1.1.2",
+  "notes": "修复 Moma 网关模型调用接入，AI 配置改为优先使用 Moma 当前共享配置、短期凭证和模型网关，避免本插件维护独立 AI 配置。",
   "mainJsUrl": "https://raw.githubusercontent.com/Goblinzzzzzz/review-assistant-release/ece826044e2c1e9e00b17d3b577e1c4ab941d39d/main.js",
   "stylesCssUrl": "https://raw.githubusercontent.com/Goblinzzzzzz/review-assistant-release/ece826044e2c1e9e00b17d3b577e1c4ab941d39d/styles.css",
   "manifestUrl": "https://raw.githubusercontent.com/Goblinzzzzzz/review-assistant-release/ece826044e2c1e9e00b17d3b577e1c4ab941d39d/manifest.json"
