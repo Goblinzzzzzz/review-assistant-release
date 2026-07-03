@@ -1,7 +1,9 @@
 {
-  "version": "1.1.2",
-  "notes": "修复 Moma 网关模型调用接入，AI 配置改为优先使用 Moma 当前共享配置、短期凭证和模型网关，避免本插件维护独立 AI 配置。",
-  "mainJsUrl": "https://raw.githubusercontent.com/Goblinzzzzzz/review-assistant-release/d8900ac76914b2f0d352ffa6a75444ca03184a3d/main.js",
-  "stylesCssUrl": "https://raw.githubusercontent.com/Goblinzzzzzz/review-assistant-release/d8900ac76914b2f0d352ffa6a75444ca03184a3d/styles.css",
-  "manifestUrl": "https://raw.githubusercontent.com/Goblinzzzzzz/review-assistant-release/d8900ac76914b2f0d352ffa6a75444ca03184a3d/manifest.json"
+  "version": "1.2.0",
+  "notes": "新增阶段一现场述职记录与阶段二AI多轮业务追问工作台；AI结合述职材料、现场回答和业务知识包生成业务反馈报告；弱化五维度为参考评分；修复提交按钮灰、多话题追问轮次和语音转写收尾问题。",
+  "mainJsUrl": "https://raw.githubusercontent.com/Goblinzzzzzz/review-assistant-release/f69f63218169dd8ac2d89658b5d066d898bc20ae/main.js",
+  "stylesCssUrl": "https://raw.githubusercontent.com/Goblinzzzzzz/review-assistant-release/f69f63218169dd8ac2d89658b5d066d898bc20ae/styles.css",
+  "manifestUrl": "https://raw.githubusercontent.com/Goblinzzzzzz/review-assistant-release/f69f63218169dd8ac2d89658b5d066d898bc20ae/manifest.json",
+  "mainJsSha256": "37a1a94cc5c9677b38637fba2b61d7cf9d047b72ebc0352e1a2e272b245b9ad0",
+  "stylesSha256": "620c868667d8d186ce5d3b6a61f7959baa5243ff7739f7adc8984854b0789211"
 }
