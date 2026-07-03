@@ -1,7 +1,7 @@
 {
   "id": "review-assistant",
   "name": "惠居业务汇报管理",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "minAppVersion": "1.0.0",
   "description": "惠居述职业务反馈工具，支持现场语音转写、AI业务追问和业务反馈报告",
   "author": "惠居平台人力行政中心-佑麟",

@@ -536,7 +536,7 @@ var TENCENT_ASR_DEFAULT_SAMPLE_RATE = 16e3;
 var TENCENT_ASR_PACKET_SAMPLE_COUNT = 3200;
 var SPEECH_PLAYBACK_PROVIDER_LOCAL = "local";
 var SPEECH_PLAYBACK_PROVIDER_TENCENT = "tencent";
-var TENCENT_TTS_DEFAULT_VOICE_TYPE = 101001;
+var TENCENT_TTS_DEFAULT_VOICE_TYPE = 101030;
 var TENCENT_TTS_DEFAULT_CODEC = "mp3";
 var TENCENT_TTS_MAX_CHARS = 500;
 var HOMEBREW_INSTALL_COMMAND = `/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"`;
@@ -598,13 +598,44 @@ function normalizeSpeechPlaybackProvider(provider) {
   }
   return SPEECH_PLAYBACK_PROVIDER_LOCAL;
 }
+var EMBEDDED_TENCENT_OBF_KEY = "hj-ra-tc-2026";
+var EMBEDDED_TENCENT_APPID_ENC = "WVkdQlgURFAcBw==";
+var EMBEDDED_TENCENT_SECRET_ID_ENC = "KSFkNhZDNzd3ZXlBfj0/ZAQuSDoVZ2pqY3UYJkQGBmUTF1tf";
+var EMBEDDED_TENCENT_SECRET_KEY_ENC = "AyVaIg8fMCYYBXN2DhAPZB9XaTdaVVAFYlICAng4Ixs=";
+function decodeObfuscatedValue(encoded, key) {
+  try {
+    const buf = Buffer.from(encoded, "base64");
+    const kb = Buffer.from(key, "utf8");
+    let out = "";
+    for (let i = 0; i < buf.length; i++) {
+      out += String.fromCharCode(buf[i] ^ kb[i % kb.length]);
+    }
+    return Buffer.from(out, "binary").toString("utf8");
+  } catch (e) {
+    return "";
+  }
+}
+function getEmbeddedTencentCredentials() {
+  return {
+    appId: decodeObfuscatedValue(EMBEDDED_TENCENT_APPID_ENC, EMBEDDED_TENCENT_OBF_KEY),
+    secretId: decodeObfuscatedValue(EMBEDDED_TENCENT_SECRET_ID_ENC, EMBEDDED_TENCENT_OBF_KEY),
+    secretKey: decodeObfuscatedValue(EMBEDDED_TENCENT_SECRET_KEY_ENC, EMBEDDED_TENCENT_OBF_KEY)
+  };
+}
+function resolveTencentCredentials(settings) {
+  const appId = String((settings && settings.get("tencentAsrAppId")) || "").trim();
+  const secretId = String((settings && settings.get("tencentAsrSecretId")) || "").trim();
+  const secretKey = String((settings && settings.get("tencentAsrSecretKey")) || "").trim();
+  if (appId && secretId && secretKey) {
+    return { appId, secretId, secretKey };
+  }
+  return getEmbeddedTencentCredentials();
+}
 function encodeTencentQueryValue(value) {
   return encodeURIComponent(String(value));
 }
 function buildTencentAsrWebSocketUrl(settings) {
-  const appId = String(settings.get("tencentAsrAppId") || "").trim();
-  const secretId = String(settings.get("tencentAsrSecretId") || "").trim();
-  const secretKey = String(settings.get("tencentAsrSecretKey") || "").trim();
+  const { appId, secretId, secretKey } = resolveTencentCredentials(settings);
   if (!appId || !secretId || !secretKey) {
     throw new Error("\u8BF7\u5148\u586B\u5199\u817E\u8BAF\u4E91 AppID\u3001SecretID \u548C SecretKey");
   }
@@ -662,12 +693,7 @@ function float32ToInt16Samples(input) {
   return output;
 }
 function getTencentTtsCredentials(settings) {
-  const useAsrCredentials = settings.get("tencentTtsUseAsrCredentials") !== false;
-  return {
-    appId: String(useAsrCredentials ? settings.get("tencentAsrAppId") || "" : settings.get("tencentTtsAppId") || "").trim(),
-    secretId: String(useAsrCredentials ? settings.get("tencentAsrSecretId") || "" : settings.get("tencentTtsSecretId") || "").trim(),
-    secretKey: String(useAsrCredentials ? settings.get("tencentAsrSecretKey") || "" : settings.get("tencentTtsSecretKey") || "").trim()
-  };
+  return resolveTencentCredentials(settings);
 }
 function buildTencentTtsWebSocketUrl(settings, text) {
   const { appId, secretId, secretKey } = getTencentTtsCredentials(settings);
@@ -687,7 +713,7 @@ function buildTencentTtsWebSocketUrl(settings, text) {
     Speed: Number(settings.get("tencentTtsSpeed") ?? 0),
     Text: text,
     Timestamp: now,
-    VoiceType: Number(settings.get("tencentTtsVoiceType") || TENCENT_TTS_DEFAULT_VOICE_TYPE),
+    VoiceType: TENCENT_TTS_DEFAULT_VOICE_TYPE,
     Volume: Number(settings.get("tencentTtsVolume") ?? 0)
   };
   const sortedKeys = Object.keys(params).sort();
@@ -777,12 +803,12 @@ var DEFAULT_SETTINGS = {
   tencentAsrFilterPunc: 0,
   tencentAsrConvertNumMode: 1,
   tencentAsrHotwordList: "",
-  speechPlaybackType: SPEECH_PLAYBACK_PROVIDER_LOCAL,
+  speechPlaybackType: SPEECH_PLAYBACK_PROVIDER_TENCENT,
+  autoPlayVoice: true,
   tencentTtsUseAsrCredentials: true,
   tencentTtsAppId: "",
   tencentTtsSecretId: "",
   tencentTtsSecretKey: "",
-  tencentTtsVoiceType: TENCENT_TTS_DEFAULT_VOICE_TYPE,
   tencentTtsCodec: TENCENT_TTS_DEFAULT_CODEC,
   tencentTtsSampleRate: 16e3,
   tencentTtsSpeed: 0,
@@ -800,6 +826,7 @@ var DEFAULT_SETTINGS = {
   whisperPrompt: DEFAULT_WHISPER_PROMPT,
   users: defaultUsers,
   storagePath: "\u8FF0\u804C\u52A9\u624B",
+  businessKnowledgeVersion: "",
   maxFollowUpRounds: 5,
   questionStyle: "sharp",
   autoTranscribe: true,
@@ -863,7 +890,8 @@ var SettingsManager = class {
       return this.settings.voiceSetupCompleted === true;
     }
     if (provider === SPEECH_RECOGNITION_PROVIDER_TENCENT_REALTIME) {
-      return Boolean(String(this.settings.tencentAsrAppId || "").trim() && String(this.settings.tencentAsrSecretId || "").trim() && String(this.settings.tencentAsrSecretKey || "").trim());
+      const embedded = getEmbeddedTencentCredentials();
+      return Boolean(embedded.appId && embedded.secretId && embedded.secretKey);
     }
     return Boolean(String(this.settings.localWhisperUrl || "").trim());
   }
@@ -3859,6 +3887,15 @@ ${material.actions.map((a) => `- [${a.priority}] ${a.action}`).join("\n") || "\u
   }
 };
 
+var DEFAULT_BUSINESS_KNOWLEDGE_VERSION = "2026.7.3";
+var DEFAULT_BUSINESS_KNOWLEDGE = {
+  "business-context.md": "# 省心租业务背景\n\n> AI 述职的业务语境。提问前会读取本文，让 AI 先\"懂省心租赚什么钱、谁干什么活、流程怎么走\"，再进入指标追问。\n\n## 一、模式本质\n\n省心租赚\"**服务 × 效率**\"的钱，**不吃差价、平进平出**。核心是靠把成交周期从行业平均 **57 天压缩到 17 天**赚取周转效率，靠租后服务（保洁 / 维修 / 安全 / 居住服务）赚取服务溢价。\n\n战略\"五横两纵\"：好租（基础租赁）→ 美租（美化增值）→ 帮住（居住服务）。\n\nAI 已落地的能力：HQI 房源品质分打分、AI 封面助手、400 AI 训练（8 类业主抗性剧本 + 角色扮演）。\n\n武汉市场态势（参考）：报盘 −11%、商机 +15.1%、成交 +3%、均价 −4%（存量收缩、需求活跃、量稳价跌）。\n\n## 二、六芒星六角色\n\n- **资管经理（总导演）**：收房评估 + 快速出房 + 收益管理。资管三力 = 专业力 / 联动力 / 交互力。\n- **云管家**：线上运营与资源流转。\n- **客户经理 / 经纪人**：房客匹配 + 二出去化 + 老客留存。\n- **服务管家**：租后守护（签后 / 租中 / 全天在线）。\n- **租务管家**：保洁 + 维修一次性解决率 + 安全技防。\n- **供应链**：服务供给保障。\n\n合作三本质：开放沟通、专业分工、价值共创。\n\n## 三、15 节点流程\n\n报盘 → 推荐 → 400 沟通 → 面访 → 实勘 → 测算 → 签约 → 房源传递 → 流管备案 → 空看 / 带看 → 出房签约 → 物业交割 → 租期服务 → 续租 / 二出\n\n> 前 7 节点（报盘→签约）= **收房**主线；带看→出房签约 = **出房**主线；交割之后 = **管房**主线。三总监述职即围绕这三段。\n\n## 四、术语表（AI 业务黑话字典）\n\n- **首招 / 首出招租**：新收房源首次出租去化（指标 key：`firstRent`）。\n- **二招 / 二出**：租客退租后房源再次出租去化（`secondRent`）。\n- **中退预售率**：中途退租的预售房源占比，**越低越好**（`midCancel`）。\n- **圈房去化**：将房源\"圈\"入定向去化池做集中转化，是二出述职的核心抓手。\n- **HQI**：房源品质分，**< 8 分为待改进**，直接影响出房竞争力。\n- **净收比**：净增 / 新收，衡量收房质量。\n- **强基行动**：季度标准人效达标考核，**月均 8 套达标**（`rentalEfficiency`）。\n- **聚焦盘**：高去化潜力楼盘，新收快出的关键来源。\n- **包租产品占比**：0103 在管 / 签约在管（`packageRatio`），管房条线核心结构指标。\n- **长库存**：长时间未去化房源，**占比越低越好**（`longStock`）。\n- **价高**：挂牌价 > 楼盘 60 天成交价 & 居室 60 天成交价 & 建议价。\n- **冷盘**：近 2 个月大租赁成交 ≤ 1 套的楼盘。\n- **亏损（二出）**：二出长库存 + 经营亏损。\n- **配置 / 品相**：由智能审核判定的缺配 / 品相问题。\n- **T+3 整备**：退租后 3 天内完成房源整备上线。\n- **LAST1 / LAST5**：落后述职机制——LAST1 大部 / LAST5 区域每周述职，聚焦前端管理与圈房去化。\n",
+  "metrics.json": "{\n  \"compositeScore\": {\n    \"formula\": \"25%净增完成度 + 35%标准人效 + 20%首招 + 20%二招\",\n    \"scope\": \"大区/区域综合运营分\"\n  },\n  \"indicators\": {\n    \"netAdd\": {\n      \"name\": \"在管净增\",\n      \"def\": \"新收 - 解约，衡量在管规模净增长\",\n      \"side\": \"收房\"\n    },\n    \"rentalEfficiency\": {\n      \"name\": \"标准人效\",\n      \"def\": \"月均收房套数，强基行动达标考核线\",\n      \"target\": 8,\n      \"side\": \"收房\"\n    },\n    \"reportToSign\": {\n      \"name\": \"报盘转收率\",\n      \"def\": \"报盘 → 签约的转化率，资源端入口效率\",\n      \"side\": \"收房\"\n    },\n    \"visitToSign\": {\n      \"name\": \"面访转收率\",\n      \"def\": \"面访 → 签约的转化率，业主交互力的直接体现\",\n      \"baseline\": 0.25,\n      \"side\": \"收房\"\n    },\n    \"newQuickOut\": {\n      \"name\": \"新收快出\",\n      \"def\": \"新收房源快速去化能力，由聚焦盘占比 × 收房居室偏离度驱动\",\n      \"side\": \"收房\"\n    },\n    \"firstRent\": {\n      \"name\": \"首招成功率\",\n      \"def\": \"新收房源首次出租去化率\",\n      \"side\": \"出房\"\n    },\n    \"secondRent\": {\n      \"name\": \"二招成功率\",\n      \"def\": \"租客退租后再出租去化率（二出）\",\n      \"side\": \"出房\"\n    },\n    \"renew\": {\n      \"name\": \"续约率\",\n      \"def\": \"业主到期续约率，管房留存基础指标\",\n      \"side\": \"管房\"\n    },\n    \"midCancel\": {\n      \"name\": \"中退预售率\",\n      \"def\": \"中途退租的预售房源占比，越低越好\",\n      \"lowerBetter\": true,\n      \"side\": \"出房\"\n    },\n    \"longStock\": {\n      \"name\": \"长库存占比\",\n      \"def\": \"长时间未去化房源占在管比，越低越好\",\n      \"lowerBetter\": true,\n      \"side\": \"出房\"\n    },\n    \"retention\": {\n      \"name\": \"业主到期留存率\",\n      \"def\": \"业主到期后继续委托省心租的比例（武汉年 78%，全国 NO.2）\",\n      \"side\": \"管房\"\n    },\n    \"packageRatio\": {\n      \"name\": \"包租产品占比\",\n      \"def\": \"0103 在管 / 签约在管，管房结构指标\",\n      \"side\": \"管房\"\n    }\n  }\n}\n",
+  "causal-models.json": "{\n  \"models\": [\n    {\n      \"key\": \"resourceToSign\",\n      \"name\": \"资源转收\",\n      \"formula\": \"渠道联动 × 业主交互\",\n      \"appliesTo\": \"收房\",\n      \"levers\": [\"报盘转收率\", \"面访转收率\", \"门店破4破8\"]\n    },\n    {\n      \"key\": \"newQuickOut\",\n      \"name\": \"新收快出\",\n      \"formula\": \"聚焦盘占比 × 收房居室偏离度\",\n      \"appliesTo\": \"收房\"\n    },\n    {\n      \"key\": \"rentOut\",\n      \"name\": \"出房\",\n      \"formula\": \"房源竞争力 × 渠道联动力\",\n      \"appliesTo\": \"出房\",\n      \"competitiveness\": [\"HQI实勘分\", \"市价5%以上占比\", \"配置\", \"品相\"],\n      \"channel\": [\"核心渠道出房占比(客经+精英)\", \"带看覆盖率\"]\n    },\n    {\n      \"key\": \"riskIdle\",\n      \"name\": \"待租风险识别\",\n      \"appliesTo\": \"出房\",\n      \"firstOut\": [\"配置\", \"品相\", \"价高\"],\n      \"secondOut\": [\"价高\", \"冷盘\", \"亏损\"],\n      \"defs\": {\n        \"价高\": \"挂牌价>楼盘60天成交价 & 居室60天成交价 & 建议价\",\n        \"冷盘\": \"近2月大租赁成交≤1\",\n        \"亏损\": \"二出长库存+经营亏损\",\n        \"配置\": \"智能审核判定缺配\",\n        \"品相\": \"智能审核判定品相问题\"\n      }\n    },\n    {\n      \"key\": \"rentCycle\",\n      \"name\": \"招租期-去化率\",\n      \"appliesTo\": \"出房\",\n      \"insight\": \"招租期45-90天去化最高约80%，过长反降；招租期 vs 普租成交周期差值是关键\"\n    },\n    {\n      \"key\": \"retentionDrive\",\n      \"name\": \"业主留存\",\n      \"formula\": \"租后服务质量 × 收益稳定 × 安全合规\",\n      \"appliesTo\": \"管房\",\n      \"levers\": [\"维修一次性解决率\", \"保洁质量\", \"安全技防巡检\", \"按时收租\", \"T+3整备完备率\"]\n    }\n  ],\n  \"reviewCalibers\": {\n    \"出房述职\": \"中退预售率30% + 月初空置去化率30% + 二出圈房去化率40%\",\n    \"收房述职\": \"标准人效达标率(强基行动，月均8套)\",\n    \"管房述职\": \"业主到期留存率(核心) + 包租产品占比 + 新收T+3整备完备率(综合诊断，无固定权重)\",\n    \"落后述职\": \"LAST1大部/LAST5区域每周，聚焦前端管理与圈房去化\"\n  }\n}\n",
+  "roles.json": "{\n  \"roles\": {\n    \"资管总监\": {\n      \"line\": \"收房\",\n      \"duty\": \"总导演：收房评估 + 快速出房 + 收益管理\",\n      \"focus\": [\"netAdd\", \"rentalEfficiency\", \"reportToSign\", \"visitToSign\", \"newQuickOut\"],\n      \"caliber\": \"收房述职\"\n    },\n    \"客户总监\": {\n      \"line\": \"出房\",\n      \"duty\": \"房客匹配 + 二出去化 + 老客留存\",\n      \"focus\": [\"firstRent\", \"secondRent\", \"midCancel\", \"longStock\"],\n      \"extraLevers\": [\"带看覆盖率\", \"客经联动\"],\n      \"caliber\": \"出房述职\"\n    },\n    \"租务总监\": {\n      \"line\": \"管房\",\n      \"duty\": \"保洁 + 维修 + 安全 + 留存\",\n      \"focus\": [\"retention\", \"packageRatio\"],\n      \"extraLevers\": [\"T+3整备完备率\", \"保洁维修闭环\"],\n      \"caliber\": \"管房述职\"\n    }\n  }\n}\n",
+  "README.md": "# 业务知识包维护指引（给 HR / 运营）\n\n> 这 5 个文件是插件 AI 述职时\"懂业务\"的知识来源。AI 每次提问前会读取这里的内容，注入到 system prompt，让追问从\"抽象方法论\"转向\"基于真实指标与因果模型的业务追问\"。\n> **改完无需发版、无需改代码**——在插件设置里点一次\"重新加载业务知识\"即刻生效。\n\n---\n\n## 一、文件清单与作用\n\n| 文件 | 作用 | 谁来维护 |\n|---|---|---|\n| `README.md` | 本维护指引 | HR |\n| `business-context.md` | 业务背景：省心租模式本质 + 六芒星六角色 + 15 节点流程 + 术语表（AI 的业务语境） | HR / 业务专家 |\n| `metrics.json` | 指标体系：综合运营分公式 + 收房/出房/管房指标定义（口径、目标值、所属条线） | 业务分析师 |\n| `causal-models.json` | 因果模型库 + 述职口径（AI 的\"追问武器\"，告诉 AI 失分指标该怎么拆） | 业务专家 |\n| `roles.json` | 角色 → 条线 → 关注指标 → 述职口径 映射（决定资管/客户/租务总监各自被问什么） | HR |\n\n---\n\n## 二、如何增改指标（metrics.json）\n\n`indicators` 下每一项就是一个指标，结构如下：\n\n```json\n\"指标key\": {\n  \"name\": \"指标中文名\",\n  \"def\": \"口径定义，AI 提问依据\",\n  \"side\": \"所属条线（收房 / 出房 / 管房）\",\n  \"target\": 8,         // 目标值（可选，达标考核线）\n  \"baseline\": 0.25,    // 基线值（可选，参考线）\n  \"lowerBetter\": true  // 越低越好（可选，没这个字段默认越高越好）\n}\n```\n\n新增指标三步：\n1. 在 `indicators` 下加一个 key（英文驼峰，如 `tenantSatisfaction`）。\n2. 至少写 `name` / `def` / `side`；达标考核加 `target`，参考线加 `baseline`，负面指标加 `\"lowerBetter\": true`。\n3. 在 `roles.json` 对应角色的 `focus` 数组里加上这个 key——**AI 才会对该角色追问它**。\n\n> ⚠️ 改完点\"重新加载\"。**只改 metrics.json 但不挂到 roles.json 的 focus，AI 不会主动追问**——挂载关系在 roles.json。\n\n---\n\n## 三、如何扩展因果模型（causal-models.json）\n\n`models` 是 AI 拆解失分原因的武器库。每个模型：\n\n```json\n{\n  \"key\": \"模型key\",\n  \"name\": \"模型名\",\n  \"formula\": \"A × B（公式化表达业务因果）\",\n  \"appliesTo\": \"收房 / 出房 / 管房（决定对哪条线生效）\",\n  \"levers\": [\"可操作的杠杆点\"],\n  \"defs\": { \"术语\": \"判定标准\" }   // 可选，AI 用来识别问题归类\n}\n```\n\n新增模型要点：\n- 起一个英文 key，写 `appliesTo`（**必须和 roles.json 里某条线一致才会被注入**对应总监的提问）。\n- 公式尽量写成\"A × B\"或\"A + B\"的业务语言（如\"房源竞争力 × 渠道联动力\"）。\n- `defs` 里的判定标准要写死（如\"价高 = 挂牌价 > 楼盘 60 天成交价 & 居室 60 天成交价 & 建议价\"），AI 会照此把房源问题归类。\n\n---\n\n## 四、如何调整述职口径（reviewCalibers）\n\n`causal-models.json` 末尾的 `reviewCalibers` 是 AI 评估述职表现的标尺：\n\n- `出房述职`：中退预售率 30% + 月初空置去化率 30% + 二出圈房去化率 40%\n- `收房述职`：标准人效达标率（强基行动，月均 8 套）\n- `落后述职`：LAST1 大部 / LAST5 区域每周述职，聚焦前端管理与圈房去化\n\n权重变了（比如二出圈房占比从 40% 调到 50%）就改这里，AI 立即按新权重追问。\n\n---\n\n## 五、如何调整角色关注点（roles.json）\n\n每个总监被追问哪些指标，由该角色 `focus` 数组决定——删一个 key，AI 就不再对该角色追问它。\n`extraLevers` 是该角色额外的业务杠杆（非指标，但 AI 会拿来做追问），如客户总监的\"带看覆盖率\"、租务总监的\"T+3 整备完备率\"。\n\n> 角色名（资管总监 / 客户总监 / 租务总监）必须和述职材料里的角色字段一致，否则匹配不上、AI 会降级回默认方法论。\n\n---\n\n## 六、不懂的业务词 → 加到术语表\n\n`business-context.md` 末尾的\"术语表\"是 AI 理解业务黑话的字典。新出现的词（比如新的产品代号、新的考核动作）加一行即可：\n\n```\n- 新词：一句话定义\n```\n\n---\n\n## 七、改完如何生效\n\n1. 保存文件（Obsidian 会自动同步到 iCloud）。\n2. 打开插件设置 → 找到\"业务知识包\"卡片 → 点 **重新加载**。\n3. 状态显示\"已加载（资管/客户/租务 3 角色）\"即成功。\n4. 下一次 AI 提问就按新内容追问。\n\n> 如果改坏了 JSON（语法错误），插件会**降级回默认五维度方法论提问，不会报错阻断**——但 AI 会\"变笨\"。所以改完务必点一次\"重新加载\"确认状态正常。\n\n---\n\n## 八、恢复默认\n\n设置卡片里点\"恢复默认\"会把这 5 个文件重置回出厂内容（**会覆盖你的修改，慎用**）。\n",
+};
+
 // src/services/BusinessKnowledgeService.ts
 var BusinessKnowledgeService = class {
   constructor(app, getStoragePath) {
@@ -3892,6 +3929,46 @@ var BusinessKnowledgeService = class {
       this.cache = null;
     }
     return this.cache;
+  }
+  async ensureKnowledgeFolder(folderPath) {
+    const parts = String(folderPath).split("/").filter(Boolean);
+    let current = "";
+    for (const part of parts) {
+      current = current ? `${current}/${part}` : part;
+      if (!this.app.vault.getAbstractFileByPath(current)) {
+        try {
+          await this.app.vault.createFolder(current);
+        } catch (e) {
+        }
+      }
+    }
+  }
+  async ensureDefaultKnowledge(settingsManager) {
+    try {
+      const dir = this.dir();
+      const files = Object.keys(DEFAULT_BUSINESS_KNOWLEDGE);
+      const missing = files.filter((name) => !this.app.vault.getAbstractFileByPath(`${dir}/${name}`));
+      const stamped = !!(settingsManager && settingsManager.get && settingsManager.get("businessKnowledgeVersion") === DEFAULT_BUSINESS_KNOWLEDGE_VERSION);
+      if (stamped && missing.length === 0) {
+        return false;
+      }
+      await this.ensureKnowledgeFolder(dir);
+      for (const name of files) {
+        try {
+          await this.app.vault.adapter.write(`${dir}/${name}`, DEFAULT_BUSINESS_KNOWLEDGE[name]);
+        } catch (e) {
+          console.error(`业务知识文件写入失败: ${dir}/${name}`, e);
+        }
+      }
+      this.cache = null;
+      if (settingsManager && settingsManager.set) {
+        await settingsManager.set("businessKnowledgeVersion", DEFAULT_BUSINESS_KNOWLEDGE_VERSION);
+      }
+      return true;
+    } catch (e) {
+      console.error("业务知识包默认写入失败", e);
+      return false;
+    }
   }
   async getPromptContext(role) {
     const k = await this.loadKnowledge();
@@ -4951,10 +5028,10 @@ var ReviewAssistantSettingTab = class extends import_obsidian2.PluginSettingTab 
     new import_obsidian2.Setting(aiCard).setName("当前网关").setDesc(config.baseURL || MOMA_API_BASE_URL);
     new import_obsidian2.Setting(aiCard).setName("当前模型").setDesc(config.model || MOMA_DEFAULT_MODEL);
 
-    const speechCard = this.createSettingsCard(container, "语音识别配置", "可选择本地 Whisper、通用 HTTP 接口或腾讯云实时语音转写。");
+    const speechCard = this.createSettingsCard(container, "语音识别配置", "默认使用本地 Whisper 转写，音频不上传。");
     const speechProvider = normalizeSpeechRecognitionProvider(settings.get("whisperApiType"));
-    new import_obsidian2.Setting(speechCard).setName("语音识别方式").setDesc("本地 Whisper 默认不上传音频；腾讯云实时转写会在录音时通过 WebSocket 上传音频流。").addDropdown(
-      (dropdown) => dropdown.addOption(SPEECH_RECOGNITION_PROVIDER_LOCAL, "本地 Whisper").addOption(SPEECH_RECOGNITION_PROVIDER_HTTP, "通用 HTTP API").addOption(SPEECH_RECOGNITION_PROVIDER_TENCENT_REALTIME, "腾讯云实时语音转写").setValue(speechProvider).onChange(async (value) => {
+    new import_obsidian2.Setting(speechCard).setName("语音识别方式").setDesc("本地 Whisper 默认不上传音频。如已自建转写服务，可选通用 HTTP API。").addDropdown(
+      (dropdown) => dropdown.addOption(SPEECH_RECOGNITION_PROVIDER_LOCAL, "本地 Whisper").addOption(SPEECH_RECOGNITION_PROVIDER_HTTP, "通用 HTTP API").setValue(speechProvider).onChange(async (value) => {
         await settings.set("whisperApiType", normalizeSpeechRecognitionProvider(value));
         this.display();
       })
@@ -5051,26 +5128,7 @@ var ReviewAssistantSettingTab = class extends import_obsidian2.PluginSettingTab 
       );
     }
     if (speechProvider === SPEECH_RECOGNITION_PROVIDER_TENCENT_REALTIME) {
-      const statusDiv = speechCard.createDiv("whisper-status");
-      statusDiv.createEl("p", { text: "腾讯云实时语音转写需要先开通语音识别服务，并在腾讯云控制台创建 API 密钥。", cls: "setting-status-warning" });
-      new import_obsidian2.Setting(speechCard).setName("腾讯云 AppID").setDesc("腾讯云账号 AppID。").addText(
-        (text) => text.setPlaceholder("1250000000").setValue(settings.get("tencentAsrAppId") || "").onChange(async (value) => {
-          await settings.set("tencentAsrAppId", value.trim());
-        })
-      );
-      new import_obsidian2.Setting(speechCard).setName("腾讯云 SecretID").setDesc("用于生成实时转写 WebSocket 鉴权签名。").addText(
-        (text) => text.setPlaceholder("AKID...").setValue(settings.get("tencentAsrSecretId") || "").onChange(async (value) => {
-          await settings.set("tencentAsrSecretId", value.trim());
-        })
-      );
-      new import_obsidian2.Setting(speechCard).setName("腾讯云 SecretKey").setDesc("保存在本地 Obsidian 插件配置中，请勿分享配置文件。").addText(
-        (text) => {
-          text.inputEl.type = "password";
-          text.setPlaceholder("SecretKey").setValue(settings.get("tencentAsrSecretKey") || "").onChange(async (value) => {
-            await settings.set("tencentAsrSecretKey", value.trim());
-          });
-        }
-      );
+      speechCard.createEl("p", { text: "腾讯云鉴权已内置，无需手动填写。", cls: "setting-status-success" });
       const tencentEngine = ["16k_zh", "16k_zh_en"].includes(settings.get("tencentAsrEngineModelType")) ? settings.get("tencentAsrEngineModelType") : TENCENT_ASR_DEFAULT_ENGINE;
       new import_obsidian2.Setting(speechCard).setName("引擎模型").setDesc("述职汇报现场仅保留中文通用和普方英大模型；大模型引擎会按腾讯云大模型版计费。").addDropdown(
         (dropdown) => dropdown.addOption("16k_zh", "16k_zh 中文通用").addOption("16k_zh_en", "16k_zh_en 普方英大模型").setValue(tencentEngine).onChange(async (value) => {
@@ -5123,41 +5181,13 @@ var ReviewAssistantSettingTab = class extends import_obsidian2.PluginSettingTab 
         this.display();
       })
     );
+    new import_obsidian2.Setting(playbackCard).setName("\u81EA\u52A8\u8BED\u97F3\u64AD\u62A5").setDesc("\u5F00\u542F\u540E\uFF0CAI \u6BCF\u6761\u63D0\u95EE/\u8FFD\u95EE\u4F1A\u81EA\u52A8\u6717\u8BFB\uFF1B\u53EF\u968F\u65F6\u5173\u95ED\uFF0C\u5173\u95ED\u540E\u4ECD\u53EF\u70B9\u51FB\u6D88\u606F\u4E0A\u7684\u5587\u53ED\u624B\u52A8\u64AD\u62A5\u3002").addToggle(
+      (toggle) => toggle.setValue(settings.get("autoPlayVoice") !== false).onChange(async (value) => {
+        await settings.set("autoPlayVoice", value);
+      })
+    );
     if (playbackProvider === SPEECH_PLAYBACK_PROVIDER_TENCENT) {
-      new import_obsidian2.Setting(playbackCard).setName("\u590D\u7528\u8BED\u97F3\u8BC6\u522B\u817E\u8BAF\u4E91\u5BC6\u94A5").setDesc("\u5F00\u542F\u540E\u4F7F\u7528\u4E0A\u65B9\u817E\u8BAF\u4E91 ASR \u7684 AppID\u3001SecretID \u548C SecretKey\u3002").addToggle(
-        (toggle) => toggle.setValue(settings.get("tencentTtsUseAsrCredentials") !== false).onChange(async (value) => {
-          await settings.set("tencentTtsUseAsrCredentials", value);
-          this.display();
-        })
-      );
-      if (settings.get("tencentTtsUseAsrCredentials") === false) {
-        new import_obsidian2.Setting(playbackCard).setName("\u817E\u8BAF\u4E91 TTS AppID").setDesc("\u817E\u8BAF\u4E91\u8D26\u53F7 AppID\u3002").addText(
-          (text) => text.setPlaceholder("1250000000").setValue(settings.get("tencentTtsAppId") || "").onChange(async (value) => {
-            await settings.set("tencentTtsAppId", value.trim());
-          })
-        );
-        new import_obsidian2.Setting(playbackCard).setName("\u817E\u8BAF\u4E91 TTS SecretID").setDesc("\u7528\u4E8E\u751F\u6210\u5B9E\u65F6\u8BED\u97F3\u5408\u6210 WebSocket \u9274\u6743\u7B7E\u540D\u3002").addText(
-          (text) => text.setPlaceholder("AKID...").setValue(settings.get("tencentTtsSecretId") || "").onChange(async (value) => {
-            await settings.set("tencentTtsSecretId", value.trim());
-          })
-        );
-        new import_obsidian2.Setting(playbackCard).setName("\u817E\u8BAF\u4E91 TTS SecretKey").setDesc("\u4FDD\u5B58\u5728\u672C\u5730 Obsidian \u63D2\u4EF6\u914D\u7F6E\u4E2D\uFF0C\u8BF7\u52FF\u5206\u4EAB\u914D\u7F6E\u6587\u4EF6\u3002").addText(
-          (text) => {
-            text.inputEl.type = "password";
-            text.setPlaceholder("SecretKey").setValue(settings.get("tencentTtsSecretKey") || "").onChange(async (value) => {
-              await settings.set("tencentTtsSecretKey", value.trim());
-            });
-          }
-        );
-      }
-      new import_obsidian2.Setting(playbackCard).setName("\u97F3\u8272 ID").setDesc("\u586B\u5199\u817E\u8BAF\u4E91\u8BED\u97F3\u5408\u6210 VoiceType\uFF0C\u9ED8\u8BA4 101001\u3002").addText(
-        (text) => {
-          text.inputEl.type = "number";
-          text.setPlaceholder(String(TENCENT_TTS_DEFAULT_VOICE_TYPE)).setValue(String(settings.get("tencentTtsVoiceType") || TENCENT_TTS_DEFAULT_VOICE_TYPE)).onChange(async (value) => {
-            await settings.set("tencentTtsVoiceType", Number(value) || TENCENT_TTS_DEFAULT_VOICE_TYPE);
-          });
-        }
-      );
+      playbackCard.createEl("p", { text: "\u817E\u8BAF\u4E91\u8BED\u97F3\u5408\u6210\u9274\u6743\u5DF2\u5185\u7F6E\uFF0C\u65E0\u9700\u624B\u52A8\u586B\u5199\u3002", cls: "setting-status-success" });
       new import_obsidian2.Setting(playbackCard).setName("\u8BED\u901F").setDesc("\u8303\u56F4 -2 \u5230 6\uFF0C0 \u4E3A\u9ED8\u8BA4\u8BED\u901F\u3002").addSlider(
         (slider) => slider.setLimits(-2, 6, 0.25).setValue(Number(settings.get("tencentTtsSpeed") ?? 0)).setDynamicTooltip().onChange(async (value) => {
           await settings.set("tencentTtsSpeed", value);
@@ -5959,11 +5989,24 @@ var ReviewPanelView = class extends import_obsidian3.ItemView {
           if (message.role === "assistant") {
             const actions = meta.createDiv({ cls: "review-message-inline-actions" });
             const speak = actions.createEl("button", { cls: "review-speak-control", attr: { "aria-label": "\u64AD\u62A5 AI \u5185\u5BB9" } });
-            (0, import_obsidian3.setIcon)(speak, "volume-2");
+            const refreshSpeakIcon = () => {
+              (0, import_obsidian3.setIcon)(speak, speak.classList.contains("is-speaking") ? "volume-x" : "volume-2");
+            };
+            refreshSpeakIcon();
             speak.title = "\u64AD\u62A5 AI \u5185\u5BB9";
             speak.addEventListener("click", async () => {
-              await this.speakMessage(message.content, speak);
+              if (speak.classList.contains("is-speaking")) {
+                this.stopSpeechPlayback();
+                return;
+              }
+              this.speakMessage(message.content, speak);
             });
+            if (this.pendingAutoSpeak && message.content === this.pendingAutoSpeak) {
+              this.pendingAutoSpeak = null;
+              if (this.plugin.getSettingsManager().get("autoPlayVoice") !== false) {
+                this.speakMessage(message.content, speak);
+              }
+            }
           }
         });
         content.createDiv({ cls: "review-message-bubble", text: message.content });
@@ -5979,6 +6022,7 @@ var ReviewPanelView = class extends import_obsidian3.ItemView {
     if (controlEl) {
       controlEl.addClass("is-speaking");
       controlEl.disabled = true;
+      (0, import_obsidian3.setIcon)(controlEl, "volume-x");
     }
     this.speechPlaybackBusy = true;
     try {
@@ -5998,6 +6042,7 @@ var ReviewPanelView = class extends import_obsidian3.ItemView {
       if (controlEl) {
         controlEl.removeClass("is-speaking");
         controlEl.disabled = false;
+        (0, import_obsidian3.setIcon)(controlEl, "volume-2");
       }
     }
   }
@@ -6913,6 +6958,7 @@ var ReviewPanelView = class extends import_obsidian3.ItemView {
             type: "question"
           };
           this.conversationHistory.push(message);
+          this.pendingAutoSpeak = question;
           await this.saveConversation();
         }
       } else {
@@ -6929,6 +6975,7 @@ var ReviewPanelView = class extends import_obsidian3.ItemView {
             type: "follow-up"
           };
           this.conversationHistory.push(message);
+          this.pendingAutoSpeak = result.question;
           await this.saveConversation();
         } else {
           this.currentQuestion = "";
@@ -7132,6 +7179,14 @@ var ReviewAssistantPlugin = class extends import_obsidian4.Plugin {
     this.registerCommands();
     this.addSettingTab(new ReviewAssistantSettingTab(this.app, this));
     await this.dataService.initializeStructure();
+    try {
+      const seeded = await this.getBusinessKnowledgeService().ensureDefaultKnowledge(this.settingsManager);
+      if (seeded) {
+        console.log(`${REVIEW_ASSISTANT_PLUGIN_NAME} 业务知识包已默认写入`);
+      }
+    } catch (e) {
+      console.error("业务知识包初始化失败", e);
+    }
     this.scheduleAutomaticUpdateCheck();
     console.log(`${REVIEW_ASSISTANT_PLUGIN_NAME}\u63D2\u4EF6\u52A0\u8F7D\u5B8C\u6210`);
   }
