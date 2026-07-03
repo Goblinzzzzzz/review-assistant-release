@@ -1,9 +1,9 @@
 {
-  "version": "1.2.0",
-  "notes": "新增阶段一现场述职记录与阶段二AI多轮业务追问工作台；AI结合述职材料、现场回答和业务知识包生成业务反馈报告；弱化五维度为参考评分；修复提交按钮灰、多话题追问轮次和语音转写收尾问题。",
-  "mainJsUrl": "https://raw.githubusercontent.com/Goblinzzzzzz/review-assistant-release/f69f63218169dd8ac2d89658b5d066d898bc20ae/main.js",
-  "stylesCssUrl": "https://raw.githubusercontent.com/Goblinzzzzzz/review-assistant-release/f69f63218169dd8ac2d89658b5d066d898bc20ae/styles.css",
-  "manifestUrl": "https://raw.githubusercontent.com/Goblinzzzzzz/review-assistant-release/f69f63218169dd8ac2d89658b5d066d898bc20ae/manifest.json",
-  "mainJsSha256": "37a1a94cc5c9677b38637fba2b61d7cf9d047b72ebc0352e1a2e272b245b9ad0",
+  "version": "1.2.1",
+  "notes": "内置腾讯云语音合成鉴权(开箱即用)；默认音色改为 101030 智柯(通用男声)；AI 提问/追问支持自动语音播报(可在设置关闭)；业务知识包在安装/升级时自动写入；语音识别默认本地 Whisper 并隐藏腾讯实时转写配置；喇叭图标优化为播报/停止切换；统一 TTS 鉴权读取。",
+  "mainJsUrl": "https://raw.githubusercontent.com/Goblinzzzzzz/review-assistant-release/0aa71f602fa0d27fcdafdb990ade135cc95552ae/main.js",
+  "stylesCssUrl": "https://raw.githubusercontent.com/Goblinzzzzzz/review-assistant-release/0aa71f602fa0d27fcdafdb990ade135cc95552ae/styles.css",
+  "manifestUrl": "https://raw.githubusercontent.com/Goblinzzzzzz/review-assistant-release/0aa71f602fa0d27fcdafdb990ade135cc95552ae/manifest.json",
+  "mainJsSha256": "1b6b8d7f3131bb46f3304fa96fde9af55564001c497b3256e59ffeb25b788a00",
   "stylesSha256": "620c868667d8d186ce5d3b6a61f7959baa5243ff7739f7adc8984854b0789211"
 }
