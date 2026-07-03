@@ -203,21 +203,23 @@ function buildEvaluationSummaryText(evaluation) {
     ...weakest.map((item) => `${item.label}\uFF08${item.score}/${item.max}\uFF09`),
     ...(evaluation.improvements || []).slice(0, 2).map((item) => item.suggestion).filter(Boolean)
   ].slice(0, 4);
-  return `\u672C\u6B21\u8FF0\u804C\u8BC4\u4EF7\u5B8C\u6210\uFF1A\u603B\u5206 ${evaluation.totalScore}/${maxScore}\uFF0C\u7B49\u7EA7 ${evaluation.grade}\u3002
+  return `\u672C\u6B21\u4E1A\u52A1\u53CD\u9988\u5DF2\u751F\u6210\u3002\u4EE5\u4E0B\u5185\u5BB9\u4F18\u5148\u7528\u4E8E\u590D\u76D8\u4E1A\u52A1\u95EE\u9898\u3001\u6539\u8FDB\u52A8\u4F5C\u548C\u540E\u7EED\u8DDF\u8FDB\uFF1B\u8BC4\u5206\u4EC5\u4F5C\u4E3A\u53C2\u8003\u53E3\u5F84\u3002
 
-\u6838\u5FC3\u95EE\u9898\uFF1A
-${coreProblems.length ? coreProblems.map((item) => `- ${item}`).join("\n") : `- ${evaluation.summary || "\u6682\u65E0\u660E\u663E\u95EE\u9898\uFF0C\u4F46\u4ECD\u9700\u4FDD\u6301\u8FC7\u7A0B\u590D\u76D8\u3002"}`}
+\u6838\u5FC3\u4E1A\u52A1\u95EE\u9898\uFF1A
+${coreProblems.length ? coreProblems.map((item) => `- ${item}`).join("\n") : `- ${evaluation.summary || "\u6682\u672A\u8BC6\u522B\u5230\u7A81\u51FA\u4E1A\u52A1\u95EE\u9898\uFF0C\u4F46\u4ECD\u9700\u4FDD\u6301\u8FC7\u7A0B\u590D\u76D8\u3002"}`}
 
 \u63A5\u4E0B\u6765\u8981\u5173\u6CE8\uFF1A
 ${focusItems.length ? focusItems.map((item) => `- ${item}`).join("\n") : "- \u6301\u7EED\u8DDF\u8E2A\u627F\u8BFA\u4E8B\u9879\u3001\u5173\u952E\u6307\u6807\u548C\u8FC7\u7A0B\u52A8\u4F5C\u7684\u95ED\u73AF\u843D\u5730\u3002"}
 
-\u603B\u7ED3\uFF1A${evaluation.summary || "\u8BF7\u7ED3\u5408\u8BC4\u4EF7\u62A5\u544A\u7EE7\u7EED\u590D\u76D8\u3002"}`;
+\u603B\u7ED3\uFF1A${evaluation.summary || "\u8BF7\u7ED3\u5408\u4E1A\u52A1\u53CD\u9988\u62A5\u544A\u7EE7\u7EED\u590D\u76D8\u3002"}
+
+\u53C2\u8003\u8BC4\u5206\uFF1A${evaluation.totalScore}/${maxScore}\uFF0C\u53C2\u8003\u7B49\u7EA7 ${evaluation.grade}\u3002`;
 }
 function buildBusinessFeedbackSummaryText(businessFeedback, evaluation) {
   const issues = (businessFeedback.topIssues || []).slice(0, 3);
   const issueText = issues.length ? issues.map((i) => `- ${i.category}:${i.rootCause}`).join("\n") : "";
   const lines = [];
-  lines.push(evaluation ? `\u4E1A\u52A1\u53CD\u9988\u5DF2\u5B8C\u6210\uFF0C\u53C2\u8003\u4E94\u7EF4\u5EA6 ${evaluation.totalScore} \u5206\uFF08\u7B49\u7EA7 ${evaluation.grade}\uFF09\u3002` : "\u4E1A\u52A1\u53CD\u9988\u5DF2\u5B8C\u6210\u3002");
+  lines.push(evaluation ? `\u4E1A\u52A1\u53CD\u9988\u5DF2\u5B8C\u6210\u3002\u4E94\u7EF4\u5EA6\u5206\u6570\u4EC5\u4F5C\u53C2\u8003\uFF1A${evaluation.totalScore} \u5206\uFF08\u53C2\u8003\u7B49\u7EA7 ${evaluation.grade}\uFF09\u3002` : "\u4E1A\u52A1\u53CD\u9988\u5DF2\u5B8C\u6210\u3002");
   lines.push("");
   lines.push("\u5BFC\u5411\u5EFA\u8BAE:");
   lines.push(businessFeedback.overallGuidance || "(\u672A\u751F\u6210)");
@@ -4187,14 +4189,14 @@ updatedAt: ${(/* @__PURE__ */ new Date()).toISOString()}
     })).filter((item) => item.item || item.support || item.expectedResult);
   }
   parseConversation(content) {
-    const sectionMatch = content.match(/## 对话记录\s*([\s\S]*?)(?=\n## 五维度评价|\n## [^\n]+\n|$)/);
+    const sectionMatch = content.match(/## 对话记录\s*([\s\S]*?)(?=\n## (?:五维度评价|参考评分|AI 业务反馈)|\n## [^\n]+\n|$)/);
     if (!sectionMatch)
       return [];
     const section = sectionMatch[1].trim();
     if (!section)
       return [];
     const messages = [];
-    const messageRegex = /\*\*(AI|述职人)\*\*\s*\(([^)]+)\)\s*\n([\s\S]*?)(?=\n\*\*(?:AI|述职人)\*\*\s*\([^)]+\)|$)/g;
+    const messageRegex = /\*\*(AI|业务问题|AI追问|AI总结|述职人|现场述职|追问回答)\*\*\s*\(([^)]+)\)\s*\n([\s\S]*?)(?=\n\*\*(?:AI|业务问题|AI追问|AI总结|述职人|现场述职|追问回答)\*\*\s*\([^)]+\)|$)/g;
     let match;
     while ((match = messageRegex.exec(section)) !== null) {
       const content2 = match[3].trim();
@@ -4203,12 +4205,21 @@ updatedAt: ${(/* @__PURE__ */ new Date()).toISOString()}
       messages.push({
         id: `${match[2]}-${messages.length}`,
         timestamp: match[2],
-        role: match[1] === "AI" ? "assistant" : "user",
+        role: match[1] === "AI" || match[1] === "业务问题" || match[1] === "AI追问" || match[1] === "AI总结" ? "assistant" : "user",
         content: content2,
-        type: match[1] === "AI" ? "question" : "answer"
+        type: match[1] === "现场述职" ? "presentation" : match[1] === "追问回答" || match[1] === "述职人" ? "answer" : match[1] === "AI总结" ? "evaluation-summary" : match[1] === "业务问题" || match[1] === "AI" ? "question" : "follow-up"
       });
     }
     return messages;
+  }
+  getConversationPersistLabel(message) {
+    if (message.role === "assistant") {
+      if (message.type === "evaluation-summary") return "AI总结";
+      if (message.type === "question") return "业务问题";
+      return "AI追问";
+    }
+    if (message.type === "presentation") return "现场述职";
+    return "追问回答";
   }
   /**
    * 保存对话记录
@@ -4222,13 +4233,13 @@ updatedAt: ${(/* @__PURE__ */ new Date()).toISOString()}
     const conversationSection = `
 ## \u5BF9\u8BDD\u8BB0\u5F55
 
-${(conversation == null ? void 0 : conversation.map((m) => `**${m.role === "assistant" ? "AI" : "\u8FF0\u804C\u4EBA"}** (${m.timestamp})
+${(conversation == null ? void 0 : conversation.map((m) => `**${this.getConversationPersistLabel(m)}** (${m.timestamp})
 ${m.content}
 `).join("\n")) || ""}
 `;
     if (content.includes("## \u5BF9\u8BDD\u8BB0\u5F55")) {
       const updated = content.replace(
-        /## 对话记录[\s\S]*?(?=\n## 五维度评价|\n## [^\n]+\n|$)/,
+        /## 对话记录[\s\S]*?(?=\n## (?:五维度评价|参考评分|AI 业务反馈)|\n## [^\n]+\n|$)/,
         conversationSection.trim()
       );
       await this.app.vault.modify(file, updated);
@@ -4246,9 +4257,9 @@ ${m.content}
     }
     const content = await this.app.vault.read(file);
     const evaluationSection = this.formatEvaluationSection(evaluation);
-    if (content.includes("## \u4E94\u7EF4\u5EA6\u8BC4\u4EF7")) {
+    if (/## (?:\u4E94\u7EF4\u5EA6\u8BC4\u4EF7|\u53C2\u8003\u8BC4\u5206|AI \u4E1A\u52A1\u53CD\u9988)/.test(content)) {
       const updated = content.replace(
-        /## 五维度评价[\s\S]*?(?=\n## [^\n]+\n|$)/,
+        /## (?:五维度评价|参考评分|AI 业务反馈)[\s\S]*?(?=\n## [^\n]+\n|$)/,
         evaluationSection.trim()
       );
       await this.app.vault.modify(file, updated);
@@ -4312,6 +4323,9 @@ ${issueText}
 ${highlightsText}
 `;
   }
+  formatReferenceScoreSection(evaluation) {
+    return this.formatEvaluationSection(evaluation).trim().replace(/^## 五维度评价/, "## 参考评分（五维度）").replace("**总分**", "**参考总分**").replace("**等级**", "**参考等级**").replace("### 各维度得分", "### 参考维度明细").replace("| 维度 | 得分 | 满分 | 评价 |", "| 参考维度 | 参考分 | 满分 | 反馈 |") + "\n\n> 分数仅用于校准反馈重点，不作为唯一结论。";
+  }
   async saveEvaluationReport(material, evaluation, sourceFilePath, businessFeedback) {
     var _a2;
     const dateObj = new Date(material.date);
@@ -4347,7 +4361,7 @@ source: ${sourceFilePath || ""}
 createdAt: ${(/* @__PURE__ */ new Date()).toISOString()}
 ---
 
-# \u8FF0\u804C\u8BC4\u4EF7\u62A5\u544A
+# \u8FF0\u804C\u4E1A\u52A1\u53CD\u9988\u62A5\u544A
 
 ## \u57FA\u672C\u4FE1\u606F
 - \u8FF0\u804C\u4EBA\uFF1A${material.userName}
@@ -4359,12 +4373,12 @@ createdAt: ${(/* @__PURE__ */ new Date()).toISOString()}
       sections.push(this.formatBusinessFeedbackSection(businessFeedback).trim());
     }
     if (evaluation) {
-      const refHeader = businessFeedback ? "## \u53C2\u8003\u8BC4\u5206\uFF08\u4E94\u7EF4\u5EA6\uFF09" : "## \u8BC4\u4EF7\u6982\u89C8";
+      const refHeader = businessFeedback ? "## \u53C2\u8003\u8BC4\u5206\uFF08\u4E94\u7EF4\u5EA6\uFF09" : "## \u4E1A\u52A1\u53CD\u9988\u6982\u89C8";
       sections.push(`${refHeader}
 
-![\u4E94\u7EF4\u5EA6\u80FD\u529B\u96F7\u8FBE\u56FE](${radarEmbedPath})
+![\u53C2\u8003\u7EF4\u5EA6\u96F7\u8FBE\u56FE](${radarEmbedPath})
 
-${this.formatEvaluationSection(evaluation).trim()}`);
+${this.formatReferenceScoreSection(evaluation).trim()}`);
     }
     const reportContent = sections.join("\n\n") + "\n";
     const existing = this.app.vault.getAbstractFileByPath(filePath);
@@ -4907,7 +4921,7 @@ var ReviewAssistantSettingTab = class extends import_obsidian2.PluginSettingTab 
     };
     createTab("review", "述职管理");
     createTab("model", "模型管理");
-    createTab("evaluation", "评价模型");
+    createTab("evaluation", "反馈口径");
     this.renderReviewSettings(reviewContent, settings);
     await this.renderModelSettings(modelContent, settings);
     this.renderEvaluationSettings(evaluationContent, settings);
@@ -5164,7 +5178,7 @@ var ReviewAssistantSettingTab = class extends import_obsidian2.PluginSettingTab 
   renderEvaluationSettings(container, settings) {
     const model = normalizeEvaluationModel(settings.get("evaluationModel"));
     const totalScore = getEvaluationMaxScore(model);
-    const overviewCard = this.createSettingsCard(container, "评价模型", `当前模型满分 ${totalScore} 分。AI 评价、雷达图、评价报告和等级判断都会使用这里的配置。`);
+    const overviewCard = this.createSettingsCard(container, "反馈与参考评分模型", `当前模型满分 ${totalScore} 分。业务反馈、参考评分、雷达图和等级判断都会使用这里的配置。`);
     overviewCard.createDiv({ cls: "review-model-note", text: "维度权重建议合计 100 分；如调整为其他总分，等级阈值也需要同步调整。" });
     new import_obsidian2.Setting(overviewCard).setName("恢复默认分数").setDesc("仅恢复维度满分和等级最低分，不修改评价标准和说明内容。").addButton(
       (btn) => btn.setButtonText("恢复默认分数").onClick(async () => {
@@ -5190,7 +5204,7 @@ var ReviewAssistantSettingTab = class extends import_obsidian2.PluginSettingTab 
         new import_obsidian2.Notice("已恢复默认分数");
       })
     );
-    const dimensionsCard = this.createSettingsCard(container, "维度分数与评价标准", "仅支持修改每个评价维度的满分；核心问题、评价说明和评分标准作为评价口径展示。");
+    const dimensionsCard = this.createSettingsCard(container, "维度权重与反馈口径", "仅支持修改每个参考维度的满分；核心问题、反馈说明和参考标准作为业务反馈口径展示。");
     model.dimensions.forEach((dimension, index) => {
       const section = dimensionsCard.createDiv({ cls: "review-evaluation-dimension" });
       new import_obsidian2.Setting(section).setName(`${dimension.name}`).setDesc(`维度标识：${dimension.key}`).addText(
@@ -5207,14 +5221,14 @@ var ReviewAssistantSettingTab = class extends import_obsidian2.PluginSettingTab 
       const readonly = section.createDiv({ cls: "review-model-readonly" });
       readonly.createDiv({ cls: "review-model-readonly-label", text: "核心问题" });
       readonly.createDiv({ cls: "review-model-readonly-text", text: dimension.question || "未配置" });
-      readonly.createDiv({ cls: "review-model-readonly-label", text: "评价说明" });
+      readonly.createDiv({ cls: "review-model-readonly-label", text: "反馈说明" });
       readonly.createDiv({ cls: "review-model-readonly-text", text: dimension.description || "未配置" });
-      readonly.createDiv({ cls: "review-model-readonly-label", text: "评分标准" });
+      readonly.createDiv({ cls: "review-model-readonly-label", text: "参考标准" });
       const criteriaList = readonly.createEl("ul", { cls: "review-model-criteria-list" });
       const criteria = dimension.criteria && dimension.criteria.length ? dimension.criteria : ["未配置"];
       criteria.forEach((criterion) => criteriaList.createEl("li", { text: criterion }));
     });
-    const gradesCard = this.createSettingsCard(container, "等级评分规则", "仅支持修改等级最低分；等级名称和等级说明作为评价口径展示。评价完成后插件会按这里的阈值重新计算等级。");
+    const gradesCard = this.createSettingsCard(container, "参考等级规则", "仅支持修改等级最低分；等级名称和等级说明作为反馈口径展示。业务反馈生成后插件会按这里的阈值重新计算参考等级。");
     model.grades.forEach((gradeRule, index) => {
       new import_obsidian2.Setting(gradesCard).setName(`等级 ${gradeRule.grade}`).setDesc(gradeRule.description || "未填写等级说明").addText(
         (text) => {
@@ -5503,6 +5517,49 @@ var ReviewPanelView = class extends import_obsidian3.ItemView {
     }
     return count;
   }
+  getMeetingPhase() {
+    return this.conversationHistory.some((message) => message.role === "assistant" && message.type !== "evaluation-summary") ? "followup" : "presentation";
+  }
+  getQuestionStats() {
+    const maxRounds = this.plugin.getSettingsManager().get("maxFollowUpRounds");
+    const topicIndex = this.conversationHistory.filter((message) => message.role === "assistant" && message.type === "question").length || (this.conversationHistory.some((message) => message.role === "assistant" && message.type !== "evaluation-summary") ? 1 : 0);
+    return { topicIndex, currentFollowUp: this.getCurrentTopicFollowUpCount(), maxRounds };
+  }
+  getMessageLabel(message) {
+    if (message.role === "assistant") {
+      if (message.type === "evaluation-summary") return "AI总结";
+      if (message.type === "question") return "业务问题";
+      return "AI追问";
+    }
+    if (message.type === "presentation") return "现场述职记录";
+    return "追问回答";
+  }
+  getCurrentInputPlaceholder() {
+    return this.getMeetingPhase() === "presentation" ? "记录现场述职内容；文本和语音转写会保存为现场记录，并作为 AI 追问与业务反馈依据…" : "记录述职人对当前追问的回答；文本和语音转写都会进入 AI 后续分析…";
+  }
+  getDisplayCurrentQuestion() {
+    if (this.currentQuestion) return this.currentQuestion;
+    const lastQuestion = [...this.conversationHistory].reverse().find((message) => message.role === "assistant" && message.type !== "evaluation-summary");
+    return lastQuestion ? lastQuestion.content : "";
+  }
+  renderContextItem(container, label, value) {
+    container.createDiv({ cls: "review-context-item" }, (item) => {
+      item.createDiv({ cls: "review-context-label", text: label });
+      item.createDiv({ cls: "review-context-value", text: value || "未填写" });
+    });
+  }
+  getFocusMetricsText(material) {
+    const metrics = (material == null ? void 0 : material.keyMetrics) || [];
+    const names = metrics.map((m) => m.indicator).filter(Boolean).slice(0, 3);
+    return names.length ? names.join("、") : "以述职材料中的 OKR、核心指标、差距和举措为准";
+  }
+  getBusinessModelText(material) {
+    const role = (material == null ? void 0 : material.role) || ((this.activeItem == null ? void 0 : this.activeItem.user) ? this.activeItem.user.role : "");
+    if (role.includes("客户")) return "出房 = 房源竞争力 × 渠道联动力";
+    if (role.includes("租务")) return "管房 = 服务质量 × 收益稳定 × 安全合规";
+    if (role.includes("资管")) return "收房 = 资源转收 × 新收快出";
+    return "业务问题诊断 + 导向建议";
+  }
   get activeItem() {
     return this.sessionItems[this.activeIndex];
   }
@@ -5753,6 +5810,25 @@ var ReviewPanelView = class extends import_obsidian3.ItemView {
         });
       });
     });
+    this.renderWorkbenchContext(container);
+  }
+  renderWorkbenchContext(container) {
+    const material = this.activeMaterial;
+    const item = this.activeItem;
+    if (!material && !item) return;
+    container.createDiv({ cls: "review-workbench-context" }, (context) => {
+      context.createDiv({ cls: "review-ai-basis" }, (basis) => {
+        basis.createDiv({ cls: "review-ai-basis-title", text: "AI 生成依据" });
+        basis.createDiv({ cls: "review-ai-basis-desc", text: "AI 会结合述职材料、现场述职/回答记录和业务知识包生成追问与业务反馈。" });
+        const list = basis.createDiv({ cls: "review-ai-basis-list" });
+        ["述职材料", "现场回答", "业务知识包"].forEach((text) => list.createSpan({ cls: "review-ai-basis-pill", text }));
+      });
+      context.createDiv({ cls: "review-context-grid" }, (grid) => {
+        this.renderContextItem(grid, "当前角色", (material == null ? void 0 : material.role) || ((item == null ? void 0 : item.user) ? item.user.role : "未识别"));
+        this.renderContextItem(grid, "业务模型", this.getBusinessModelText(material));
+        this.renderContextItem(grid, "关注指标", this.getFocusMetricsText(material));
+      });
+    });
   }
   async startFreshReview() {
     if (!this.activeItem)
@@ -5771,7 +5847,7 @@ var ReviewPanelView = class extends import_obsidian3.ItemView {
         card.createDiv({ cls: "review-person-initial", text: item.user.name.slice(0, 1) });
         card.createDiv({ cls: "review-person-info" }, (info) => {
           info.createDiv({ cls: "review-person-name", text: item.user.name });
-          info.createDiv({ cls: "review-person-role", text: item.grade ? `${item.grade} \xB7 ${item.score}\u5206` : this.getStatusLabel(item) });
+          info.createDiv({ cls: "review-person-role", text: item.grade ? `\u53cd\u9988\u5b8c\u6210 \u00b7 \u53c2\u8003${item.grade}` : this.getStatusLabel(item) });
         });
         card.addEventListener("click", async () => {
           await this.switchPerson(index);
@@ -5879,7 +5955,7 @@ var ReviewPanelView = class extends import_obsidian3.ItemView {
       row.createDiv({ cls: "review-avatar", text: message.role === "assistant" ? "AI" : "\u4EBA" });
       row.createDiv({ cls: "review-message-content" }, (content) => {
         content.createDiv({ cls: "review-message-meta" }, (meta) => {
-          meta.createSpan({ cls: "review-message-meta-label", text: message.role === "assistant" ? message.type === "evaluation-summary" ? "AI\u603B\u7ED3" : "AI\u8FFD\u95EE" : "\u8FF0\u804C\u56DE\u7B54" });
+          meta.createSpan({ cls: "review-message-meta-label", text: this.getMessageLabel(message) });
           if (message.role === "assistant") {
             const actions = meta.createDiv({ cls: "review-message-inline-actions" });
             const speak = actions.createEl("button", { cls: "review-speak-control", attr: { "aria-label": "\u64AD\u62A5 AI \u5185\u5BB9" } });
@@ -6138,10 +6214,18 @@ var ReviewPanelView = class extends import_obsidian3.ItemView {
   }
   renderInput(container) {
     container.createDiv({ cls: "review-input-panel" }, (panel) => {
-      if (this.currentQuestion) {
+      const phase = this.getMeetingPhase();
+      panel.createDiv({ cls: "review-phase-card" }, (card) => {
+        card.createDiv({ cls: "review-phase-title", text: phase === "presentation" ? "\u9636\u6BB5\u4E00\uFF1A\u73B0\u573A\u8FF0\u804C\u8BB0\u5F55" : "\u9636\u6BB5\u4E8C\uFF1AAI \u591A\u8F6E\u8FFD\u95EE" });
+        card.createDiv({ cls: "review-phase-desc", text: phase === "presentation" ? "\u5148\u8BB0\u5F55\u73B0\u573A\u8FF0\u804C/\u8865\u5145\u8BF4\u660E\uFF1B\u70B9\u51FB\u201C\u5F00\u59CB AI \u8FFD\u95EE\u201D\u540E\uFF0CAI \u4F1A\u7ED3\u5408\u6750\u6599\u548C\u73B0\u573A\u8BB0\u5F55\u8FDB\u5165\u8FFD\u95EE\u3002" : "AI \u5C06\u7ED3\u5408\u8FF0\u804C\u6750\u6599\u3001\u73B0\u573A\u8BB0\u5F55\u548C\u5F53\u524D\u56DE\u7B54\u7EE7\u7EED\u8FFD\u95EE\uFF0C\u76F4\u5230\u5F53\u524D\u4E1A\u52A1\u95EE\u9898\u6536\u655B\u3002" });
+      });
+      const displayQuestion = this.getDisplayCurrentQuestion();
+      if (displayQuestion) {
+        const stats = this.getQuestionStats();
         panel.createDiv({ cls: "review-question-card" }, (card) => {
-          card.createDiv({ cls: "review-question-header", text: "\u5F53\u524D\u95EE\u9898" });
-          card.createDiv({ cls: "review-question-body", text: this.currentQuestion });
+          const headerText = stats.topicIndex ? `\u4E1A\u52A1\u95EE\u9898 ${stats.topicIndex} \u00B7 \u5F53\u524D\u8FFD\u95EE ${stats.currentFollowUp} / \u6700\u5927 ${stats.maxRounds}` : "\u5F53\u524D\u95EE\u9898";
+          card.createDiv({ cls: "review-question-header", text: headerText });
+          card.createDiv({ cls: "review-question-body", text: displayQuestion });
         });
       }
       if (this.isRecording) {
@@ -6158,7 +6242,7 @@ var ReviewPanelView = class extends import_obsidian3.ItemView {
       panel.createDiv({ cls: "review-input-box" }, (box) => {
         this.answerInput = box.createEl("textarea", {
           cls: "review-answer-input",
-          attr: { placeholder: "\u8BB0\u5F55\u8FF0\u804C\u4EBA\u7684\u56DE\u7B54\uFF0C\u6216\u70B9\u51FB\u9EA6\u514B\u98CE\u8BED\u97F3\u8F93\u5165\u2026", rows: "2" }
+          attr: { placeholder: this.getCurrentInputPlaceholder(), rows: "2" }
         });
         this.answerInput.value = this.currentAnswer;
         this.answerInput.addEventListener("input", () => {
@@ -6169,11 +6253,12 @@ var ReviewPanelView = class extends import_obsidian3.ItemView {
           this.updateSubmitButtonState();
         });
         const mic = box.createEl("button", { cls: `review-mic-button ${this.isRecording ? "recording" : ""}`, text: this.isRecording ? "\u25A0" : "\u{1F399}" });
-        mic.title = "\u8BED\u97F3\u8F93\u5165";
+        mic.title = "\u8BED\u97F3\u8F93\u5165\uFF1A\u73B0\u573A\u8FF0\u804C/\u56DE\u7B54\u4F1A\u8F6C\u5199\u5E76\u8FDB\u5165 AI \u5206\u6790";
         mic.addEventListener("click", async () => {
           await this.toggleRecording();
         });
       });
+      panel.createDiv({ cls: "review-input-hint", text: "提示：现场述职、补充回答和语音转写会作为 AI 分析依据，请避免录入无关闲聊。" });
     });
   }
   async toggleRecording() {
@@ -6741,19 +6826,36 @@ var ReviewPanelView = class extends import_obsidian3.ItemView {
   }
   renderToolbar(container) {
     container.createDiv({ cls: "review-toolbar" }, (toolbar) => {
-      const regenerate = toolbar.createEl("button", { cls: "review-ghost-btn", text: this.conversationHistory.length ? "\u8DF3\u5230\u65B0\u95EE\u9898" : "\u6362\u4E00\u4E2A\u9996\u95EE" });
+      const phase = this.getMeetingPhase();
+      if (phase === "presentation") {
+        const save = toolbar.createEl("button", { cls: "review-secondary-btn", text: "\u4FDD\u5B58\u73B0\u573A\u8FF0\u804C\u8BB0\u5F55", attr: { "data-review-submit-answer": "true" } });
+        save.title = "\u53EA\u4FDD\u5B58\u73B0\u573A\u8FF0\u804C/\u8865\u5145\u8BF4\u660E\uFF0C\u4E0D\u81EA\u52A8\u89E6\u53D1 AI \u8FFD\u95EE";
+        save.disabled = this.isProcessing || !this.currentAnswer.trim();
+        save.addEventListener("click", () => this.savePresentationRecord());
+        const start = toolbar.createEl("button", { cls: "review-primary-btn", text: "\u5F00\u59CB AI \u8FFD\u95EE" });
+        start.title = "AI \u5C06\u7ED3\u5408\u8FF0\u804C\u6750\u6599\u3001\u73B0\u573A\u8BB0\u5F55\u548C\u4E1A\u52A1\u77E5\u8BC6\u5305\u751F\u6210\u7B2C\u4E00\u4E2A\u4E1A\u52A1\u95EE\u9898";
+        start.disabled = this.isProcessing || !this.activeMaterial;
+        start.addEventListener("click", () => this.generateQuestion(false));
+        const evaluate = toolbar.createEl("button", { cls: "review-outline-btn", text: "\u751F\u6210\u4E1A\u52A1\u53CD\u9988" });
+        evaluate.title = "\u57FA\u4E8E\u8FF0\u804C\u6750\u6599\u3001\u73B0\u573A\u8BB0\u5F55\u548C\u4E1A\u52A1\u77E5\u8BC6\u5305\u751F\u6210 AI \u4E1A\u52A1\u53CD\u9988";
+        evaluate.disabled = this.isProcessing || !this.activeMaterial || this.conversationHistory.length === 0;
+        evaluate.addEventListener("click", () => this.generateEvaluation());
+        return;
+      }
+      const regenerate = toolbar.createEl("button", { cls: "review-ghost-btn", text: "\u8FDB\u5165\u4E0B\u4E00\u4E2A\u4E1A\u52A1\u95EE\u9898" });
       regenerate.title = "\u8DF3\u8FC7\u5F53\u524D\u8BDD\u9898\uFF0C\u57FA\u4E8E\u6750\u6599\u751F\u6210\u65B0\u95EE\u9898";
       regenerate.disabled = this.isProcessing || !this.activeMaterial;
       regenerate.addEventListener("click", () => this.generateQuestion(true));
-      const ask = toolbar.createEl("button", { cls: "review-primary-btn", text: this.conversationHistory.length ? "\u7EE7\u7EED\u8FFD\u95EE" : "\u751F\u6210\u9996\u95EE" });
-      ask.title = this.conversationHistory.length ? "\u6839\u636E\u5DF2\u6709\u95EE\u7B54\u7EE7\u7EED\u8FFD\u95EE" : "\u57FA\u4E8E\u8FF0\u804C\u6750\u6599\u751F\u6210\u7B2C\u4E00\u4E2A\u95EE\u9898";
+      const ask = toolbar.createEl("button", { cls: "review-primary-btn", text: "\u7EE7\u7EED\u56F4\u7ED5\u5F53\u524D\u95EE\u9898\u8FFD\u95EE" });
+      ask.title = "\u6839\u636E\u5DF2\u8BB0\u5F55\u7684\u73B0\u573A\u56DE\u7B54\u7EE7\u7EED\u56F4\u7ED5\u5F53\u524D\u4E1A\u52A1\u95EE\u9898\u8FFD\u95EE";
       ask.disabled = this.isProcessing || !this.activeMaterial;
       ask.addEventListener("click", () => this.generateQuestion(false));
-      const submit = toolbar.createEl("button", { cls: "review-secondary-btn", text: "\u63D0\u4EA4\u5E76\u8FFD\u95EE", attr: { "data-review-submit-answer": "true" } });
-      submit.title = "\u4FDD\u5B58\u5F53\u524D\u56DE\u7B54\uFF0C\u5E76\u81EA\u52A8\u751F\u6210\u4E0B\u4E00\u4E2A\u8FFD\u95EE";
+      const submit = toolbar.createEl("button", { cls: "review-secondary-btn", text: "\u8BB0\u5F55\u56DE\u7B54\u5E76\u751F\u6210\u8FFD\u95EE", attr: { "data-review-submit-answer": "true" } });
+      submit.title = "\u4FDD\u5B58\u5F53\u524D\u56DE\u7B54\uFF0C\u5E76\u81EA\u52A8\u751F\u6210\u4E0B\u4E00\u8F6E\u8FFD\u95EE";
       submit.disabled = this.isProcessing || !this.currentAnswer.trim();
       submit.addEventListener("click", () => this.submitAnswer());
-      const evaluate = toolbar.createEl("button", { cls: "review-outline-btn", text: "\u8BC4\u4EF7" });
+      const evaluate = toolbar.createEl("button", { cls: "review-outline-btn", text: "\u751F\u6210\u4E1A\u52A1\u53CD\u9988" });
+      evaluate.title = "\u57FA\u4E8E\u8FF0\u804C\u6750\u6599\u3001\u73B0\u573A\u56DE\u7B54\u548C\u4E1A\u52A1\u77E5\u8BC6\u5305\u751F\u6210 AI \u4E1A\u52A1\u53CD\u9988";
       evaluate.disabled = this.isProcessing || !this.activeMaterial || this.conversationHistory.length === 0;
       evaluate.addEventListener("click", () => this.generateEvaluation());
     });
@@ -6797,7 +6899,7 @@ var ReviewPanelView = class extends import_obsidian3.ItemView {
     this.render();
     try {
       const promptContext = await this.plugin.getBusinessKnowledgeService().getPromptContext(this.activeMaterial.role);
-      if (this.conversationHistory.length === 0 || forceNew) {
+      if (this.getMeetingPhase() === "presentation" || forceNew) {
         const questions = await this.plugin.getAIService().generateInitialQuestions(this.activeMaterial, promptContext);
         if (questions.length > 0) {
           const question = forceNew && this.conversationHistory.length > 0 && questions.length > 1 ? questions.find((candidate) => !this.conversationHistory.some((message) => message.role === "assistant" && message.content.trim() === candidate.trim())) || questions[1] : questions[0];
@@ -6850,7 +6952,27 @@ var ReviewPanelView = class extends import_obsidian3.ItemView {
       submit.disabled = this.isProcessing || !this.currentAnswer.trim();
     }
   }
+  async savePresentationRecord() {
+    if (!this.activeMaterial || !this.currentAnswer.trim())
+      return;
+    const message = {
+      id: Date.now().toString(36),
+      timestamp: (/* @__PURE__ */ new Date()).toISOString(),
+      role: "user",
+      content: this.currentAnswer.trim(),
+      type: "presentation"
+    };
+    this.conversationHistory.push(message);
+    await this.saveConversation();
+    this.currentAnswer = "";
+    this.statusText = "现场述职记录已保存，可继续记录或开始 AI 追问";
+    this.render();
+  }
   async submitAnswer() {
+    if (this.getMeetingPhase() === "presentation") {
+      await this.savePresentationRecord();
+      return;
+    }
     if (!this.activeMaterial || !this.currentAnswer.trim())
       return;
     const message = {
@@ -6872,7 +6994,7 @@ var ReviewPanelView = class extends import_obsidian3.ItemView {
     const enableBusinessFeedback = settingsMgr.get("generateBusinessFeedback") !== false;
     const showReferenceScore = settingsMgr.get("showReferenceScore") !== false;
     this.isProcessing = true;
-    this.statusText = enableBusinessFeedback ? "AI\u6B63\u5728\u751F\u6210\u4E1A\u52A1\u53CD\u9988\u2026" : "AI\u6B63\u5728\u751F\u6210\u4E94\u7EF4\u5EA6\u8BC4\u4EF7\u2026";
+    this.statusText = "AI\u6B63\u5728\u751F\u6210\u4E1A\u52A1\u53CD\u9988\u2026";
     this.render();
     try {
       const promptContext = await this.plugin.getBusinessKnowledgeService().getPromptContext(this.activeMaterial.role);
@@ -6883,7 +7005,7 @@ var ReviewPanelView = class extends import_obsidian3.ItemView {
           businessFeedback = await this.plugin.getAIService().generateBusinessFeedback(this.activeMaterial, this.conversationHistory, promptContext);
         } catch (error2) {
           businessFeedback = null;
-          new import_obsidian3.Notice(`\u4E1A\u52A1\u53CD\u9988\u751F\u6210\u5931\u8D25\uFF0C\u6539\u7528\u4E94\u7EF4\u5EA6\u8BC4\u4EF7\uFF1A${error2 instanceof Error ? error2.message : "\u672A\u77E5\u9519\u8BEF"}`);
+          new import_obsidian3.Notice(`\u4E1A\u52A1\u53CD\u9988\u751F\u6210\u5931\u8D25\uFF0C\u6539\u7528\u53C2\u8003\u8BC4\u5206\uFF1A${error2 instanceof Error ? error2.message : "\u672A\u77E5\u9519\u8BEF"}`);
         }
       }
       if (!businessFeedback || showReferenceScore) {
@@ -6911,12 +7033,12 @@ var ReviewPanelView = class extends import_obsidian3.ItemView {
         this.activeItem.score = evaluation.totalScore;
         this.activeItem.grade = evaluation.grade;
       }
-      new import_obsidian3.Notice(businessFeedback ? "\u4E1A\u52A1\u53CD\u9988\u5DF2\u5B8C\u6210" : `\u8BC4\u4EF7\u5B8C\u6210\uFF1A${evaluation.totalScore}\u5206\uFF0C\u7B49\u7EA7${evaluation.grade}`);
+      new import_obsidian3.Notice(businessFeedback ? "\u4E1A\u52A1\u53CD\u9988\u5DF2\u751F\u6210" : `\u4E1A\u52A1\u53CD\u9988\u5DF2\u751F\u6210\uFF0C\u53C2\u8003\u8BC4\u5206\uFF1A${evaluation.totalScore}\u5206\uFF0C\u7B49\u7EA7${evaluation.grade}`);
     } catch (error) {
-      new import_obsidian3.Notice(`\u8BC4\u4EF7\u5931\u8D25\uFF1A${error instanceof Error ? error.message : "\u672A\u77E5\u9519\u8BEF"}`);
+      new import_obsidian3.Notice(`\u4E1A\u52A1\u53CD\u9988\u751F\u6210\u5931\u8D25\uFF1A${error instanceof Error ? error.message : "\u672A\u77E5\u9519\u8BEF"}`);
     } finally {
       this.isProcessing = false;
-      this.statusText = "\u8BC4\u4EF7\u5DF2\u5B8C\u6210";
+      this.statusText = "\u4E1A\u52A1\u53CD\u9988\u5DF2\u751F\u6210";
       this.render();
     }
   }
@@ -7204,7 +7326,7 @@ var ReviewAssistantPlugin = class extends import_obsidian4.Plugin {
     });
     this.addCommand({
       id: "generate-evaluation",
-      name: "\u751F\u6210\u4E94\u7EF4\u5EA6\u8BC4\u4EF7",
+      name: "\u751F\u6210\u4E1A\u52A1\u53CD\u9988",
       callback: () => this.generateEvaluation()
     });
   }
@@ -7245,7 +7367,7 @@ var ReviewAssistantPlugin = class extends import_obsidian4.Plugin {
     await this.activateView(activeFile.path);
   }
   /**
-   * 生成评价
+   * 生成业务反馈
    */
   async generateEvaluation() {
     const activeFile = this.app.workspace.getActiveFile();
@@ -7257,7 +7379,7 @@ var ReviewAssistantPlugin = class extends import_obsidian4.Plugin {
       new import_obsidian4.Notice("\u8BF7\u5148\u914D\u7F6E API Key");
       return;
     }
-    new import_obsidian4.Notice("\u6B63\u5728\u751F\u6210\u8BC4\u4EF7...");
+    new import_obsidian4.Notice("\u6B63\u5728\u751F\u6210\u4E1A\u52A1\u53CD\u9988...");
     try {
       const material = await this.dataService.readMaterial(activeFile.path);
       if (!material) {
@@ -7271,9 +7393,9 @@ var ReviewAssistantPlugin = class extends import_obsidian4.Plugin {
       );
       await this.dataService.saveEvaluation(activeFile.path, evaluation);
       await this.dataService.saveEvaluationReport(material, evaluation, activeFile.path);
-      new import_obsidian4.Notice(`\u8BC4\u4EF7\u5B8C\u6210\uFF1A${evaluation.totalScore}\u5206\uFF0C\u7B49\u7EA7${evaluation.grade}`);
+      new import_obsidian4.Notice(`\u4E1A\u52A1\u53CD\u9988\u5DF2\u751F\u6210\uFF0C\u53C2\u8003\u8BC4\u5206\uFF1A${evaluation.totalScore}\u5206\uFF0C\u7B49\u7EA7${evaluation.grade}`);
     } catch (error) {
-      new import_obsidian4.Notice(`\u751F\u6210\u5931\u8D25\uFF1A${error instanceof Error ? error.message : "\u672A\u77E5\u9519\u8BEF"}`);
+      new import_obsidian4.Notice(`\u4E1A\u52A1\u53CD\u9988\u751F\u6210\u5931\u8D25\uFF1A${error instanceof Error ? error.message : "\u672A\u77E5\u9519\u8BEF"}`);
     }
   }
   /**
