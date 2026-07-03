@@ -4,3 +4,4 @@ data.json
 *.download
 .DS_Store
 *.bak-*
+docs/

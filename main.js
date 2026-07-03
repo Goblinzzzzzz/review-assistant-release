@@ -213,6 +213,26 @@ ${focusItems.length ? focusItems.map((item) => `- ${item}`).join("\n") : "- \u63
 
 \u603B\u7ED3\uFF1A${evaluation.summary || "\u8BF7\u7ED3\u5408\u8BC4\u4EF7\u62A5\u544A\u7EE7\u7EED\u590D\u76D8\u3002"}`;
 }
+function buildBusinessFeedbackSummaryText(businessFeedback, evaluation) {
+  const issues = (businessFeedback.topIssues || []).slice(0, 3);
+  const issueText = issues.length ? issues.map((i) => `- ${i.category}:${i.rootCause}`).join("\n") : "";
+  const lines = [];
+  lines.push(evaluation ? `\u4E1A\u52A1\u53CD\u9988\u5DF2\u5B8C\u6210\uFF0C\u53C2\u8003\u4E94\u7EF4\u5EA6 ${evaluation.totalScore} \u5206\uFF08\u7B49\u7EA7 ${evaluation.grade}\uFF09\u3002` : "\u4E1A\u52A1\u53CD\u9988\u5DF2\u5B8C\u6210\u3002");
+  lines.push("");
+  lines.push("\u5BFC\u5411\u5EFA\u8BAE:");
+  lines.push(businessFeedback.overallGuidance || "(\u672A\u751F\u6210)");
+  lines.push("");
+  lines.push("\u6838\u5FC3\u4E1A\u52A1\u95EE\u9898:");
+  lines.push(issueText || "- \u6682\u672A\u8BC6\u522B\u5230\u7A81\u51FA\u4E1A\u52A1\u95EE\u9898\u3002");
+  lines.push("");
+  lines.push("\u4E0B\u5468\u805A\u7126:");
+  lines.push(issues.length ? issues.map((i) => `- ${i.suggestion}`).join("\n") : "- \u6301\u7EED\u8DDF\u8FDB\u5173\u952E\u6307\u6807\u4E0E\u8FC7\u7A0B\u52A8\u4F5C\u7684\u95ED\u73AF\u843D\u5730\u3002");
+  if (evaluation) {
+    lines.push("");
+    lines.push("\u8BE6\u7EC6\u62A5\u544A\u5DF2\u4FDD\u5B58\uFF0C\u4E94\u7EF4\u5EA6\u5206\u6570\u89C1\u201C\u53C2\u8003\u8BC4\u5206\u201D\u533A\u3002");
+  }
+  return lines.join("\n");
+}
 function buildEvaluationRadarSvg(evaluation) {
   const items = getEvaluationDimensionItems(evaluation).map((item) => {
     const max = Math.max(1, Number(item.max) || 1);
@@ -440,7 +460,10 @@ function compareVersions(current, next) {
   }
   return 0;
 }
-async function fetchRemoteText(url) {
+async function fetchRemoteText(url, enforceHttps = false) {
+  if (enforceHttps) {
+    assertSafeUpdateUrl(url);
+  }
   const fetchImpl = typeof globalThis !== "undefined" ? globalThis.fetch : void 0;
   if (!fetchImpl)
     throw new Error("\u5F53\u524D\u73AF\u5883\u4E0D\u652F\u6301\u7F51\u7EDC\u4E0B\u8F7D");
@@ -459,8 +482,36 @@ function normalizeUpdateManifest(raw) {
     notes: raw.notes ? String(raw.notes) : "",
     mainJsUrl: raw.mainJsUrl ? String(raw.mainJsUrl) : "",
     stylesCssUrl: raw.stylesCssUrl ? String(raw.stylesCssUrl) : "",
-    manifestUrl: raw.manifestUrl ? String(raw.manifestUrl) : ""
+    manifestUrl: raw.manifestUrl ? String(raw.manifestUrl) : "",
+    mainJsSha256: raw.mainJsSha256 ? String(raw.mainJsSha256).toLowerCase() : "",
+    stylesSha256: raw.stylesSha256 ? String(raw.stylesSha256).toLowerCase() : ""
   };
+}
+var SAFE_UPDATE_HOSTS = ["raw.githubusercontent.com"];
+function assertSafeUpdateUrl(url) {
+  let parsed;
+  try {
+    parsed = new URL(url);
+  } catch (e) {
+    throw new Error("\u5347\u7EA7 URL \u683C\u5F0F\u65E0\u6548");
+  }
+  if (parsed.protocol !== "https:") {
+    throw new Error(`\u5347\u7EA7 URL \u5FC5\u987B\u4F7F\u7528 https\uFF08\u5DF2\u62D2\u7EDD ${parsed.protocol})`);
+  }
+  const host = parsed.hostname.toLowerCase();
+  if (host === "localhost" || host.endsWith(".localhost") || host === "::1") {
+    throw new Error("\u5347\u7EA7 URL \u4E0D\u5141\u8BB8\u6307\u5411 localhost");
+  }
+  if (/^127\./.test(host) || /^10\./.test(host) || /^192\.168\./.test(host) || /^172\.(1[6-9]|2\d|3[01])\./.test(host)) {
+    throw new Error("\u5347\u7EA7 URL \u4E0D\u5141\u8BB8\u6307\u5411\u5185\u7F51\u5730\u5740");
+  }
+  if (!SAFE_UPDATE_HOSTS.includes(host)) {
+    throw new Error(`\u5347\u7EA7\u6E90 host \u4E0D\u5728\u767D\u540D\u5355\uFF1A${host}`);
+  }
+}
+function computeSha256Hex(text) {
+  const crypto = require("crypto");
+  return crypto.createHash("sha256").update(text).digest("hex");
 }
 
 // src/core/SettingsManager.ts
@@ -3022,7 +3073,80 @@ var { AnthropicError: AnthropicError2, APIError: APIError2, APIConnectionError: 
 var sdk_default = Anthropic;
 
 // src/prompts/index.ts
-function getQuestionPrompt(material, style) {
+function getQuestionPrompt(material, style, promptContext) {
+  if (promptContext) {
+    const styleText = ({
+      sharp: "你的提问风格:直接、犀利、一针见血;用数据和逻辑质疑;追问'具体是什么/怎么做/凭什么';回答避重就轻就直接戳穿。",
+      moderate: "你的提问风格:直接但不过于尖锐;用数据和逻辑引导;追问具体细节。",
+      gentle: "你的提问风格:友善但坚持追问;引导述职人深入思考。"
+    })[style] || "你的提问风格:直接、犀利、一针见血;用数据和逻辑质疑。";
+    const indicatorsText = (promptContext.focusIndicators || []).map((it) => {
+      const tail = [];
+      if (it.def) tail.push(it.def);
+      if (it.target) tail.push(`目标${it.target}`);
+      if (it.baseline) tail.push(`基线${it.baseline}`);
+      if (it.lowerBetter) tail.push("越低越好");
+      return `- ${it.name}(${it.key})${tail.length ? ":" + tail.join(" / ") : ""}`;
+    }).join("\n");
+    const modelsText = (promptContext.models || []).map((m) => {
+      const lines = [];
+      lines.push(`- ${m.name}${m.formula ? " = " + m.formula : ""}`);
+      (m.levers || []).forEach((l) => lines.push(`  · 杠杆:${l}`));
+      (m.competitiveness || []).forEach((c) => lines.push(`  · 竞争力:${c}`));
+      (m.channel || []).forEach((c) => lines.push(`  · 渠道:${c}`));
+      (m.firstOut || []).forEach((c) => lines.push(`  · 首招风险:${c}`));
+      (m.secondOut || []).forEach((c) => lines.push(`  · 二招风险:${c}`));
+      if (m.defs) Object.entries(m.defs).forEach(([k2, v2]) => lines.push(`  · ${k2}:${v2}`));
+      if (m.insight) lines.push(`  · 洞察:${m.insight}`);
+      return lines.join("\n");
+    }).join("\n");
+    const extraLeversText = (promptContext.extraLevers || []).map((l) => `- ${l}`).join("\n");
+    return `你是惠居武汉城市总,正在听 ${material.role}(${material.userName}) 述职。你的职责是用业务视角犀利追问、给出业务问题的反馈与导向建议,不评价人。
+
+[业务语境]
+${promptContext.contextMd || "(未提供)"}
+
+[该角色职责]
+${promptContext.roleDuty || ""}
+
+[本周条线指标与述职口径]
+${indicatorsText || "(未配置焦点指标)"}
+${promptContext.caliber ? "述职口径:" + promptContext.caliber : ""}
+${extraLeversText ? "额外抓手:\n" + extraLeversText : ""}
+
+[追问武器:业务因果模型]
+${modelsText || "(未配置因果模型)"}
+
+[约束]
+1. 基于【述职材料 + 现场对话】围绕真实业务因果追问,直击漏洞
+2. 优先追问该条线失分指标的根因(用因果模型拆解,如价高/配置/品相/冷盘/亏损)
+3. 单议题收敛后输出【结束追问】并简述结论
+4. 不评价述职人好坏,聚焦业务问题与改进建议
+
+${styleText}
+
+当前述职材料:
+述职人:${material.userName}
+岗位:${material.role}
+日期:${material.date}
+
+述职材料全文:
+${material.rawContent || "无"}
+
+核心指标:
+${material.keyMetrics.map((m) => `- ${m.indicator}:目标${m.target},实际${m.actual},差距${m.gap}`).join("\n") || "未填写"}
+
+差距分析:
+${material.gapAnalysis.map((g) => `- ${g.gap} → ${g.why1} → ${g.why2} → 根因:${g.rootCause}(${g.controllable})`).join("\n") || "未填写"}
+
+举措方案:
+${material.actions.map((a) => `- [${a.priority}] ${a.action}(责任人:${a.owner},截止:${a.deadline})`).join("\n") || "未填写"}
+
+上周承诺完成情况:
+${material.lastWeekPromises.map((p) => `- ${p.promise}:完成度${p.completion}%`).join("\n") || "未填写"}
+
+请根据述职人的回答判断是否需要追问。如需追问,只输出下一个追问问题;如已得到实质答案,输出"【结束追问】"并简述结论。`;
+  }
   const styleGuide = {
     sharp: `\u4F60\u7684\u63D0\u95EE\u98CE\u683C\uFF1A
 - \u76F4\u63A5\u3001\u7280\u5229\u3001\u4E00\u9488\u89C1\u8840
@@ -3074,11 +3198,89 @@ function getQuestionPrompt(material, style) {
 
 \u8BF7\u6839\u636E\u8FF0\u804C\u4EBA\u7684\u56DE\u7B54\u5224\u65AD\u662F\u5426\u9700\u8981\u8FFD\u95EE\u3002\u5982\u9700\u8FFD\u95EE\uFF0C\u8F93\u51FA\u8FFD\u95EE\u5185\u5BB9\uFF1B\u5982\u5DF2\u5F97\u5230\u5B9E\u8D28\u7B54\u6848\uFF0C\u8F93\u51FA"\u3010\u7ED3\u675F\u8FFD\u95EE\u3011"\u5E76\u7B80\u8FF0\u7ED3\u8BBA\u3002`;
 }
-function getEvaluationPrompt(material, conversationHistory, evaluationModel) {
+function getEvaluationPrompt(material, conversationHistory, evaluationModel, promptContext) {
   const conversationText = conversationHistory.map((m) => `${m.role === "assistant" ? "AI" : "\u8FF0\u804C\u4EBA"}\uFF1A${m.content}`).join("\n\n");
   const normalizedModel = normalizeEvaluationModel(evaluationModel);
   const criteriaPrompt = buildEvaluationCriteriaPrompt(normalizedModel);
   const maxScore = getEvaluationMaxScore(normalizedModel);
+  if (promptContext) {
+    const indicatorsText = (promptContext.focusIndicators || []).map((it) => {
+      const tail = [];
+      if (it.def) tail.push(it.def);
+      if (it.target) tail.push(`目标${it.target}`);
+      if (it.baseline) tail.push(`基线${it.baseline}`);
+      if (it.lowerBetter) tail.push("越低越好");
+      return `- ${it.name}(${it.key})${tail.length ? ":" + tail.join(" / ") : ""}`;
+    }).join("\n");
+    const modelsText = (promptContext.models || []).map((m) => {
+      const lines = [];
+      lines.push(`- ${m.name}${m.formula ? " = " + m.formula : ""}`);
+      (m.levers || []).forEach((l) => lines.push(`  · 杠杆:${l}`));
+      (m.competitiveness || []).forEach((c) => lines.push(`  · 竞争力:${c}`));
+      (m.channel || []).forEach((c) => lines.push(`  · 渠道:${c}`));
+      (m.firstOut || []).forEach((c) => lines.push(`  · 首招风险:${c}`));
+      (m.secondOut || []).forEach((c) => lines.push(`  · 二招风险:${c}`));
+      if (m.defs) Object.entries(m.defs).forEach(([k2, v2]) => lines.push(`  · ${k2}:${v2}`));
+      if (m.insight) lines.push(`  · 洞察:${m.insight}`);
+      return lines.join("\n");
+    }).join("\n");
+    return `[业务语境]
+${promptContext.contextMd || "(未提供)"}
+
+[该角色职责]
+${promptContext.roleDuty || ""}
+
+[本周条线指标与述职口径]
+${indicatorsText || "(未配置焦点指标)"}
+${promptContext.caliber ? "述职口径:" + promptContext.caliber : ""}
+
+[追问武器:业务因果模型]
+${modelsText || "(未配置因果模型)"}
+
+[评价指令]
+你是惠居武汉城市总兼管理评价专家。先按上述省心租业务因果诊断该 ${material.role} 述职中的业务问题(用模型拆解,如价高/配置/品相/冷盘/亏损),再结合《超越指标》五维度方法给出分数与维度评价。维度的 comment / evidence / gaps / improvements 必须使用业务语言,并优先指出该条线失分指标的根因。不评价人好坏,聚焦业务问题与改进建议。
+
+述职材料:
+述职人:${material.userName}
+岗位:${material.role}
+日期:${material.date}
+
+述职材料全文:
+${material.rawContent || "无"}
+
+核心指标:
+${material.keyMetrics.map((m) => `- ${m.indicator}:目标${m.target},实际${m.actual},差距${m.gap}`).join("\n") || "未填写"}
+
+差距分析:
+${material.gapAnalysis.map((g) => `- ${g.gap} → ${g.why1} → ${g.why2} → 根因:${g.rootCause}(${g.controllable})`).join("\n") || "未填写"}
+
+举措方案:
+${material.actions.map((a) => `- [${a.priority}] ${a.action}`).join("\n") || "未填写"}
+
+对话记录:
+${conversationText || "无对话记录"}
+
+请按照以下维度进行评价:
+${criteriaPrompt}
+
+请严格按照上述权重给分,总分满分为 ${maxScore} 分。等级必须按上述等级规则判定。
+
+输出JSON格式:
+{
+  "totalScore": 78,
+  "grade": "C",
+  "summary": "一句话总结",
+  "dimensions": {
+${normalizedModel.dimensions.map((item) => `    "${item.key}": { "score": ${Math.round(item.weight * 0.8)}, "maxScore": ${item.weight}, "comment": "...", "evidence": [], "gaps": [] }`).join(",\n")}
+  },
+  "improvements": [
+    { "weakness": "技控能力不足", "currentStatus": "...", "suggestion": "..." }
+  ],
+  "highlights": [
+    { "strength": "过程管理扎实", "performance": "...", "replicationSuggestion": "..." }
+  ]
+}`;
+  }
   return `\u4F60\u662F\u7BA1\u7406\u8BC4\u4EF7\u4E13\u5BB6\uFF0C\u57FA\u4E8E\u300A\u8D85\u8D8A\u6307\u6807\u300B\u65B9\u6CD5\u8BBA\u8FDB\u884C\u4E94\u7EF4\u5EA6\u8BC4\u4EF7\u3002
 
 \u8FF0\u804C\u6750\u6599\uFF1A
@@ -3120,6 +3322,84 @@ ${normalizedModel.dimensions.map((item) => `    "${item.key}": { "score": ${Math
   "highlights": [
     { "strength": "\u8FC7\u7A0B\u7BA1\u7406\u624E\u5B9E", "performance": "...", "replicationSuggestion": "..." }
   ]
+}`;
+}
+function getBusinessFeedbackPrompt(material, conversationHistory, promptContext) {
+  const conversationText = conversationHistory.map((m) => `${m.role === "assistant" ? "AI" : "述职人"}:${m.content}`).join("\n\n");
+  const indicatorsText = (promptContext.focusIndicators || []).map((it) => {
+    const tail = [];
+    if (it.def) tail.push(it.def);
+    if (it.target) tail.push(`目标${it.target}`);
+    if (it.baseline) tail.push(`基线${it.baseline}`);
+    if (it.lowerBetter) tail.push("越低越好");
+    return `- ${it.name}(${it.key})${tail.length ? ":" + tail.join(" / ") : ""}`;
+  }).join("\n");
+  const modelsText = (promptContext.models || []).map((m) => {
+    const lines = [];
+    lines.push(`- ${m.name}${m.formula ? " = " + m.formula : ""}`);
+    (m.levers || []).forEach((l) => lines.push(`  · 杠杆:${l}`));
+    (m.competitiveness || []).forEach((c) => lines.push(`  · 竞争力:${c}`));
+    (m.channel || []).forEach((c) => lines.push(`  · 渠道:${c}`));
+    (m.firstOut || []).forEach((c) => lines.push(`  · 首招风险:${c}`));
+    (m.secondOut || []).forEach((c) => lines.push(`  · 二招风险:${c}`));
+    if (m.defs) Object.entries(m.defs).forEach(([k2, v2]) => lines.push(`  · ${k2}:${v2}`));
+    if (m.insight) lines.push(`  · 洞察:${m.insight}`);
+    return lines.join("\n");
+  }).join("\n");
+  return `[业务语境]
+${promptContext.contextMd || "(未提供)"}
+
+[该角色职责]
+${promptContext.roleDuty || ""}
+
+[本周条线指标与述职口径]
+${indicatorsText || "(未配置焦点指标)"}
+${promptContext.caliber ? "述职口径:" + promptContext.caliber : ""}
+
+[业务因果模型(用于拆解根因)]
+${modelsText || "(未配置因果模型)"}
+
+[评价任务]
+你是惠居武汉城市总的述职教练。基于上述业务语境、该 ${material.role} 的职责、条线指标与因果模型,对本次述职做业务问题诊断与导向建议。
+- 不评价人好坏,不给述职人打"行/不行"的主观判断,不给总分。
+- 用该条线因果模型(如 收房:资源转收/新收快出;出房:竞争力×联动力/待租风险;管房:留存驱动)拆解真实业务问题,不要泛泛而谈。
+- 每个 topIssues 的 rootCause 必须套用因果公式,指明断裂环节(如"报盘转收率 = 推荐量 × 面访转化 × 签约转化"中哪一环断了)。
+- evidence 必须引用现场对话原文或材料原文(用引号标出),不要编造。
+- suggestion 必须是下周可落地的具体动作,不要空话。
+- overallGuidance 给思想/方法层面的指导(2-3 句),不给分数、不评价人好坏。
+
+述职材料:
+述职人:${material.userName}
+岗位:${material.role}
+日期:${material.date}
+
+述职材料全文:
+${material.rawContent || "无"}
+
+核心指标:
+${material.keyMetrics.map((m) => `- ${m.indicator}:目标${m.target},实际${m.actual},差距${m.gap}`).join("\n") || "未填写"}
+
+差距分析:
+${material.gapAnalysis.map((g) => `- ${g.gap} → ${g.why1} → ${g.why2} → 根因:${g.rootCause}(${g.controllable})`).join("\n") || "未填写"}
+
+举措方案:
+${material.actions.map((a) => `- [${a.priority}] ${a.action}`).join("\n") || "未填写"}
+
+对话记录:
+${conversationText || "无对话记录"}
+
+严格输出 JSON(不要 markdown 代码块,不要在 JSON 外加任何文字):
+{
+  "topIssues": [
+    {
+      "category": "命中真实指标/风险类别(如 报盘转收率落后 / 待租风险积压)",
+      "rootCause": "套因果公式的根因,指明断裂环节",
+      "evidence": "引用对话或材料原文(用引号)",
+      "suggestion": "下周可落地的具体动作"
+    }
+  ],
+  "overallGuidance": "思想/方法指导,2-3 句,不给分、不评价人",
+  "highlights": ["本次述职中做得好的业务动作"]
 }`;
 }
 
@@ -3403,8 +3683,8 @@ var AIService = class {
   /**
    * 生成追问
    */
-  async generateQuestion(material, conversationHistory, latestAnswer) {
-    const systemPrompt = getQuestionPrompt(material, this.questionStyle);
+  async generateQuestion(material, conversationHistory, latestAnswer, promptContext) {
+    const systemPrompt = getQuestionPrompt(material, this.questionStyle, promptContext);
     const messages = this.buildQuestionMessages(conversationHistory, latestAnswer);
     const reply = await this.createMessageText({
       max_tokens: 1e3,
@@ -3425,7 +3705,7 @@ var AIService = class {
   /**
    * 生成初始提问
    */
-  async generateInitialQuestions(material) {
+  async generateInitialQuestions(material, promptContext) {
     const prompt = `\u57FA\u4E8E\u4EE5\u4E0B\u8FF0\u804C\u6750\u6599\uFF0C\u751F\u62103-5\u4E2A\u7280\u5229\u7684\u8FFD\u95EE\u95EE\u9898\u3002
 
 \u8FF0\u804C\u4EBA\uFF1A${material.userName}
@@ -3454,6 +3734,7 @@ ${material.actions.map((a) => `- [${a.priority}] ${a.action}`).join("\n") || "\u
 \u95EE\u98983`;
     const text = await this.createMessageText({
       max_tokens: 1e3,
+      ...(promptContext ? { system: getQuestionPrompt(material, this.questionStyle, promptContext) } : {}),
       messages: [{ role: "user", content: prompt }]
     });
     return text.split("\n").map((line) => line.trim().replace(/^[-*\d.、\s]+/, "").trim()).filter((line) => line.length > 0);
@@ -3461,8 +3742,8 @@ ${material.actions.map((a) => `- [${a.priority}] ${a.action}`).join("\n") || "\u
   /**
    * 生成五维度评价
    */
-  async generateEvaluation(material, conversationHistory) {
-    const prompt = getEvaluationPrompt(material, conversationHistory, this.evaluationModel);
+  async generateEvaluation(material, conversationHistory, promptContext) {
+    const prompt = getEvaluationPrompt(material, conversationHistory, this.evaluationModel, promptContext);
     const text = await this.createMessageText({
       max_tokens: 4e3,
       messages: [{ role: "user", content: prompt }]
@@ -3504,6 +3785,40 @@ ${material.actions.map((a) => `- [${a.priority}] ${a.action}`).join("\n") || "\u
     };
   }
   /**
+   * 生成业务反馈(业务问题诊断 + 根因 + 导向建议,不评价人)
+   * 仅在业务知识包可用(promptContext 非空)时调用,否则评价流程回退到五维度 generateEvaluation。
+   */
+  async generateBusinessFeedback(material, conversationHistory, promptContext) {
+    const prompt = getBusinessFeedbackPrompt(material, conversationHistory, promptContext);
+    const text = await this.createMessageText({
+      max_tokens: 4e3,
+      messages: [{ role: "user", content: prompt }]
+    });
+    const jsonMatch = text.match(/\{[\s\S]*\}/);
+    if (!jsonMatch) {
+      throw new Error("AI返回格式错误");
+    }
+    return this.normalizeBusinessFeedback(JSON.parse(jsonMatch[0]), material);
+  }
+  normalizeBusinessFeedback(result, material) {
+    const topIssues = Array.isArray(result.topIssues) ? result.topIssues.map((it) => ({
+      category: String((it == null ? void 0 : it.category) || "").trim(),
+      rootCause: String((it == null ? void 0 : it.rootCause) || "").trim(),
+      evidence: String((it == null ? void 0 : it.evidence) || "").trim(),
+      suggestion: String((it == null ? void 0 : it.suggestion) || "").trim()
+    })).filter((it) => it.category || it.rootCause) : [];
+    const highlights = Array.isArray(result.highlights) ? result.highlights.map((h) => String(h || "").trim()).filter(Boolean) : [];
+    return {
+      id: Date.now().toString(36),
+      materialId: material.id,
+      role: material.role,
+      createdAt: (/* @__PURE__ */ new Date()).toISOString(),
+      topIssues,
+      overallGuidance: String(result.overallGuidance || "").trim(),
+      highlights
+    };
+  }
+  /**
    * 检测材料质量
    */
   async detectMaterialQuality(material) {
@@ -3539,6 +3854,71 @@ ${material.actions.map((a) => `- [${a.priority}] ${a.action}`).join("\n") || "\u
       return { score: 50, issues: ["\u89E3\u6790\u5931\u8D25"], suggestions: [] };
     }
     return JSON.parse(jsonMatch[0]);
+  }
+};
+
+// src/services/BusinessKnowledgeService.ts
+var BusinessKnowledgeService = class {
+  constructor(app, getStoragePath) {
+    this.app = app;
+    this.getStoragePath = getStoragePath;
+    this.cache = null;
+  }
+  dir() {
+    const base = this.getStoragePath() || "述职助手";
+    return `${base}/业务知识`;
+  }
+  async readText(path) {
+    const file = this.app.vault.getAbstractFileByPath(path);
+    if (!file) {
+      throw new Error(`未找到文件: ${path}`);
+    }
+    return await this.app.vault.read(file);
+  }
+  async loadKnowledge(force = false) {
+    if (this.cache && !force) {
+      return this.cache;
+    }
+    try {
+      const dir = this.dir();
+      const ctx = await this.readText(`${dir}/business-context.md`);
+      const metrics = JSON.parse(await this.readText(`${dir}/metrics.json`));
+      const causal = JSON.parse(await this.readText(`${dir}/causal-models.json`));
+      const roles = JSON.parse(await this.readText(`${dir}/roles.json`));
+      this.cache = { ctx, metrics, causal, roles };
+    } catch (e) {
+      this.cache = null;
+    }
+    return this.cache;
+  }
+  async getPromptContext(role) {
+    const k = await this.loadKnowledge();
+    if (!k) {
+      return null;
+    }
+    const r = k.roles && k.roles.roles ? k.roles.roles[role] : void 0;
+    if (!r) {
+      return null;
+    }
+    const indicators = k.metrics && k.metrics.indicators ? k.metrics.indicators : {};
+    const focusIndicators = (r.focus || []).map((key) => ({ key, ...indicators[key] })).filter((it) => it && it.name);
+    const models = (k.causal && k.causal.models ? k.causal.models : []).filter((m) => m.appliesTo === r.line);
+    const calibers = k.causal && k.causal.reviewCalibers ? k.causal.reviewCalibers : {};
+    const caliber = r.caliber ? calibers[r.caliber] : void 0;
+    return {
+      roleDuty: r.duty,
+      contextMd: k.ctx,
+      focusIndicators,
+      models,
+      caliber,
+      extraLevers: r.extraLevers
+    };
+  }
+  async reload() {
+    return this.loadKnowledge(true);
+  }
+  isAvailable() {
+    return this.cache !== null;
   }
 };
 
@@ -3907,7 +4287,32 @@ ${evaluation.highlights.map((h) => `- **${h.strength}**\uFF1A${h.performance}`).
 ${evaluation.summary}
 `;
   }
-  async saveEvaluationReport(material, evaluation, sourceFilePath) {
+  formatBusinessFeedbackSection(businessFeedback) {
+    if (!businessFeedback) return "";
+    const issues = businessFeedback.topIssues || [];
+    const issueText = issues.length ? issues.map((i, idx) => `### 问题 ${idx + 1}：${i.category}
+- **根因**：${i.rootCause}
+- **证据**：${i.evidence}
+- **下周动作**：${i.suggestion}`).join("\n\n") : "暂未识别到突出业务问题。";
+    const highlightsText = (businessFeedback.highlights || []).length ? `
+### 值得肯定的业务动作
+
+${(businessFeedback.highlights || []).map((h) => `- ${h}`).join("\n")}
+` : "";
+    return `
+## 业务反馈
+
+### 导向建议
+
+${businessFeedback.overallGuidance || "(未生成)"}
+
+### 核心业务问题
+
+${issueText}
+${highlightsText}
+`;
+  }
+  async saveEvaluationReport(material, evaluation, sourceFilePath, businessFeedback) {
     var _a2;
     const dateObj = new Date(material.date);
     const week = material.week || getWeekNumber(dateObj);
@@ -3917,19 +4322,22 @@ ${evaluation.summary}
     const fileName = `${sanitizeFileName(material.userName)}_${material.date}_\u8FF0\u804C\u62A5\u544A.md`;
     const filePath = `${folderPath}/${fileName}`;
     await this.ensureFolder(folderPath);
-    const radarFolderPath = `${folderPath}/assets`;
-    await this.ensureFolder(radarFolderPath);
-    const radarFileName = `${sanitizeAssetFileName(material.userName)}_${material.date}_radar.svg`;
-    const radarFilePath = `${radarFolderPath}/${radarFileName}`;
-    const radarSvg = buildEvaluationRadarSvg(evaluation);
-    const existingRadar = this.app.vault.getAbstractFileByPath(radarFilePath);
-    if (existingRadar instanceof import_obsidian.TFile) {
-      await this.app.vault.modify(existingRadar, radarSvg);
-    } else {
-      await this.app.vault.create(radarFilePath, radarSvg);
+    let radarEmbedPath = "";
+    if (evaluation) {
+      const radarFolderPath = `${folderPath}/assets`;
+      await this.ensureFolder(radarFolderPath);
+      const radarFileName = `${sanitizeAssetFileName(material.userName)}_${material.date}_radar.svg`;
+      const radarFilePath = `${radarFolderPath}/${radarFileName}`;
+      const radarSvg = buildEvaluationRadarSvg(evaluation);
+      const existingRadar = this.app.vault.getAbstractFileByPath(radarFilePath);
+      if (existingRadar instanceof import_obsidian.TFile) {
+        await this.app.vault.modify(existingRadar, radarSvg);
+      } else {
+        await this.app.vault.create(radarFilePath, radarSvg);
+      }
+      radarEmbedPath = `assets/${radarFileName}`;
     }
-    const radarEmbedPath = `assets/${radarFileName}`;
-    const reportContent = `---
+    const sections = [`---
 id: ${generateId()}
 userName: ${material.userName}
 role: ${material.role}
@@ -3946,14 +4354,19 @@ createdAt: ${(/* @__PURE__ */ new Date()).toISOString()}
 - \u5C97\u4F4D\uFF1A${material.role}
 - \u8FF0\u804C\u65E5\u671F\uFF1A${material.date}
 - \u5468\u671F\uFF1A${week}
-- \u6750\u6599\u6765\u6E90\uFF1A${sourceFilePath || "\u672A\u8BB0\u5F55"}
-
-## \u8BC4\u4EF7\u6982\u89C8
+- \u6750\u6599\u6765\u6E90\uFF1A${sourceFilePath || "\u672A\u8BB0\u5F55"}`];
+    if (businessFeedback) {
+      sections.push(this.formatBusinessFeedbackSection(businessFeedback).trim());
+    }
+    if (evaluation) {
+      const refHeader = businessFeedback ? "## \u53C2\u8003\u8BC4\u5206\uFF08\u4E94\u7EF4\u5EA6\uFF09" : "## \u8BC4\u4EF7\u6982\u89C8";
+      sections.push(`${refHeader}
 
 ![\u4E94\u7EF4\u5EA6\u80FD\u529B\u96F7\u8FBE\u56FE](${radarEmbedPath})
 
-${this.formatEvaluationSection(evaluation).trim()}
-`;
+${this.formatEvaluationSection(evaluation).trim()}`);
+    }
+    const reportContent = sections.join("\n\n") + "\n";
     const existing = this.app.vault.getAbstractFileByPath(filePath);
     if (existing instanceof import_obsidian.TFile) {
       await this.app.vault.modify(existing, reportContent);
@@ -4881,6 +5294,24 @@ var ReviewAssistantSettingTab = class extends import_obsidian2.PluginSettingTab 
       })
     );
 
+    const businessCard = this.createSettingsCard(container, "业务知识包", "为 AI 注入省心租业务语境、条线指标与因果模型;缺失时自动降级为默认五维度方法论。");
+    const businessStoragePath = settings.get("storagePath") || DEFAULT_SETTINGS.storagePath;
+    const businessDir = `${businessStoragePath}/业务知识`;
+    new import_obsidian2.Setting(businessCard).setName("知识包目录").setDesc(businessDir).addButton(
+      (btn) => btn.setButtonText("打开目录").onClick(() => {
+        new import_obsidian2.Notice(`业务知识包路径:${businessDir}(请在 Obsidian 内或文件管理器中打开)`);
+      })
+    );
+    const businessService = this.plugin.getBusinessKnowledgeService();
+    const businessAvailable = businessService.isAvailable();
+    new import_obsidian2.Setting(businessCard).setName("加载状态").setDesc(businessAvailable ? "已加载(资管/客户/租务 3 角色),AI 提问与评价将使用业务知识" : "未找到业务知识包,使用默认五维度方法论").addButton(
+      (btn) => btn.setButtonText("重新加载").setCta().onClick(async () => {
+        await businessService.reload();
+        new import_obsidian2.Notice(businessService.isAvailable() ? "业务知识包已重新加载" : "未找到业务知识包,使用默认方法论");
+        this.display();
+      })
+    );
+
     const followCard = this.createSettingsCard(container, "追问设置", "配置 AI 追问风格和每个话题的最大追问轮数。");
     new import_obsidian2.Setting(followCard).setName("提问风格").setDesc("AI追问的犀利程度").addDropdown(
       (dropdown) => dropdown.addOption("sharp", "犀利（一针见血）").addOption("moderate", "适中").addOption("gentle", "温和").setValue(settings.get("questionStyle")).onChange(async (value) => {
@@ -4897,9 +5328,17 @@ var ReviewAssistantSettingTab = class extends import_obsidian2.PluginSettingTab 
     const aboutCard = this.createSettingsCard(container, "关于", "插件版本、版权和在线升级。");
     new import_obsidian2.Setting(aboutCard).setName(REVIEW_ASSISTANT_PLUGIN_NAME).setDesc(`版本 ${this.plugin.manifest.version || "1.0.0"} | 基于《超越指标》方法论`);
     new import_obsidian2.Setting(aboutCard).setName("版权信息").setDesc(REVIEW_ASSISTANT_COPYRIGHT);
-    new import_obsidian2.Setting(aboutCard).setName("在线升级清单 URL").setDesc("默认使用 GitHub 更新源。升级清单 JSON 需包含 version、mainJsUrl、stylesCssUrl，可选 manifestUrl、notes。").addText(
+    new import_obsidian2.Setting(aboutCard).setName("在线升级清单 URL").setDesc("默认使用 GitHub 更新源（强制 https + host 白名单 raw.githubusercontent.com）。升级清单 JSON 需包含 version、mainJsUrl、stylesCssUrl，可选 manifestUrl、notes、mainJsSha256、stylesSha256。").addText(
       (text) => text.setPlaceholder(REVIEW_ASSISTANT_UPDATE_MANIFEST_URL).setValue(settings.get("updateManifestUrl") || REVIEW_ASSISTANT_UPDATE_MANIFEST_URL).onChange(async (value) => {
-        await settings.set("updateManifestUrl", value.trim() || REVIEW_ASSISTANT_UPDATE_MANIFEST_URL);
+        const trimmed = value.trim() || REVIEW_ASSISTANT_UPDATE_MANIFEST_URL;
+        try {
+          assertSafeUpdateUrl(trimmed);
+        } catch (e) {
+          new import_obsidian2.Notice(`升级 URL 不安全，已拒绝保存：${e instanceof Error ? e.message : "未知错误"}`);
+          text.setValue(settings.get("updateManifestUrl") || REVIEW_ASSISTANT_UPDATE_MANIFEST_URL);
+          return;
+        }
+        await settings.set("updateManifestUrl", trimmed);
       })
     );
     new import_obsidian2.Setting(aboutCard).setName("自动检查更新").setDesc("插件启动后每天最多检查一次；发现新版本时只提醒用户，不会自动下载安装。").addToggle(
@@ -5337,6 +5776,9 @@ var ReviewPanelView = class extends import_obsidian3.ItemView {
     return "\u672A\u5F00\u59CB";
   }
   async switchPerson(index) {
+    if (this.isRecording) {
+      await this.stopRecording();
+    }
     this.activeIndex = index;
     const item = this.sessionItems[index];
     this.currentQuestion = "";
@@ -5822,6 +6264,7 @@ var ReviewPanelView = class extends import_obsidian3.ItemView {
     }
     this.tencentAsrPcmBuffer = [];
     this.tencentAsrCommittedIndexes = /* @__PURE__ */ new Set();
+    this.tencentAsrLastTransient = "";
     const socket = new WebSocketCtor(url);
     socket.binaryType = "arraybuffer";
     this.tencentAsrSocket = socket;
@@ -5883,8 +6326,10 @@ var ReviewPanelView = class extends import_obsidian3.ItemView {
             this.tencentAsrCommittedIndexes.add(key);
             this.appendTranscriptionText(text);
           }
+          this.tencentAsrLastTransient = "";
         } else if (text) {
           this.updateRecordingLabel(`\u5F55\u97F3\u4E2D \xB7 ${text.slice(-18)}`);
+          this.tencentAsrLastTransient = text;
         }
       }
       if (data.final === 1 && this.tencentAsrFinalResolver) {
@@ -5992,6 +6437,10 @@ var ReviewPanelView = class extends import_obsidian3.ItemView {
     this.tencentAsrPcmBuffer = [];
     this.tencentAsrFinalPromise = null;
     this.tencentAsrFinalResolver = null;
+    if (this.tencentAsrLastTransient) {
+      this.appendTranscriptionText(this.tencentAsrLastTransient);
+      this.tencentAsrLastTransient = "";
+    }
   }
   startRecordingSegment() {
     if (!this.isRecording || this.isStoppingRecording || !this.recordingStream)
@@ -6331,8 +6780,9 @@ var ReviewPanelView = class extends import_obsidian3.ItemView {
     this.statusText = "AI\u6B63\u5728\u5206\u6790\u6750\u6599\u5E76\u751F\u6210\u63D0\u95EE\u2026";
     this.render();
     try {
+      const promptContext = await this.plugin.getBusinessKnowledgeService().getPromptContext(this.activeMaterial.role);
       if (this.conversationHistory.length === 0 || forceNew) {
-        const questions = await this.plugin.getAIService().generateInitialQuestions(this.activeMaterial);
+        const questions = await this.plugin.getAIService().generateInitialQuestions(this.activeMaterial, promptContext);
         if (questions.length > 0) {
           const question = forceNew && questions.length > 1 ? questions[1] : questions[0];
           this.currentQuestion = question;
@@ -6348,7 +6798,7 @@ var ReviewPanelView = class extends import_obsidian3.ItemView {
         }
       } else {
         const lastAnswer = this.currentAnswer.trim() || void 0;
-        const result = await this.plugin.getAIService().generateQuestion(this.activeMaterial, this.conversationHistory, lastAnswer);
+        const result = await this.plugin.getAIService().generateQuestion(this.activeMaterial, this.conversationHistory, lastAnswer, promptContext);
         if (result.needFollowUp && result.question) {
           this.currentQuestion = result.question;
           this.followUpCount += 1;
@@ -6394,28 +6844,50 @@ var ReviewPanelView = class extends import_obsidian3.ItemView {
   async generateEvaluation() {
     if (!this.activeMaterial || !this.activeItem)
       return;
+    const settingsMgr = this.plugin.getSettingsManager();
+    const enableBusinessFeedback = settingsMgr.get("generateBusinessFeedback") !== false;
+    const showReferenceScore = settingsMgr.get("showReferenceScore") !== false;
     this.isProcessing = true;
-    this.statusText = "AI\u6B63\u5728\u751F\u6210\u4E94\u7EF4\u5EA6\u8BC4\u4EF7\u2026";
+    this.statusText = enableBusinessFeedback ? "AI\u6B63\u5728\u751F\u6210\u4E1A\u52A1\u53CD\u9988\u2026" : "AI\u6B63\u5728\u751F\u6210\u4E94\u7EF4\u5EA6\u8BC4\u4EF7\u2026";
     this.render();
     try {
-      const evaluation = await this.plugin.getAIService().generateEvaluation(this.activeMaterial, this.conversationHistory);
+      const promptContext = await this.plugin.getBusinessKnowledgeService().getPromptContext(this.activeMaterial.role);
+      let businessFeedback = null;
+      let evaluation = null;
+      if (promptContext && enableBusinessFeedback) {
+        try {
+          businessFeedback = await this.plugin.getAIService().generateBusinessFeedback(this.activeMaterial, this.conversationHistory, promptContext);
+        } catch (error2) {
+          businessFeedback = null;
+          new import_obsidian3.Notice(`\u4E1A\u52A1\u53CD\u9988\u751F\u6210\u5931\u8D25\uFF0C\u6539\u7528\u4E94\u7EF4\u5EA6\u8BC4\u4EF7\uFF1A${error2 instanceof Error ? error2.message : "\u672A\u77E5\u9519\u8BEF"}`);
+        }
+      }
+      if (!businessFeedback || showReferenceScore) {
+        evaluation = await this.plugin.getAIService().generateEvaluation(this.activeMaterial, this.conversationHistory, promptContext);
+      }
       if (this.activeItem.file) {
-        await this.plugin.getDataService().saveEvaluation(this.activeItem.file.path, evaluation);
-        await this.plugin.getDataService().saveEvaluationReport(this.activeMaterial, evaluation, this.activeItem.file.path);
+        if (evaluation) {
+          await this.plugin.getDataService().saveEvaluation(this.activeItem.file.path, evaluation);
+        }
+        if (businessFeedback || evaluation) {
+          await this.plugin.getDataService().saveEvaluationReport(this.activeMaterial, evaluation, this.activeItem.file.path, businessFeedback);
+        }
       }
       const summaryMessage = {
         id: Date.now().toString(36),
         timestamp: (/* @__PURE__ */ new Date()).toISOString(),
         role: "assistant",
-        content: buildEvaluationSummaryText(evaluation),
+        content: businessFeedback ? buildBusinessFeedbackSummaryText(businessFeedback, evaluation) : buildEvaluationSummaryText(evaluation),
         type: "evaluation-summary"
       };
       this.conversationHistory.push(summaryMessage);
       await this.saveConversation();
       this.activeItem.status = "done";
-      this.activeItem.score = evaluation.totalScore;
-      this.activeItem.grade = evaluation.grade;
-      new import_obsidian3.Notice(`\u8BC4\u4EF7\u5B8C\u6210\uFF1A${evaluation.totalScore}\u5206\uFF0C\u7B49\u7EA7${evaluation.grade}`);
+      if (evaluation) {
+        this.activeItem.score = evaluation.totalScore;
+        this.activeItem.grade = evaluation.grade;
+      }
+      new import_obsidian3.Notice(businessFeedback ? "\u4E1A\u52A1\u53CD\u9988\u5DF2\u5B8C\u6210" : `\u8BC4\u4EF7\u5B8C\u6210\uFF1A${evaluation.totalScore}\u5206\uFF0C\u7B49\u7EA7${evaluation.grade}`);
     } catch (error) {
       new import_obsidian3.Notice(`\u8BC4\u4EF7\u5931\u8D25\uFF1A${error instanceof Error ? error.message : "\u672A\u77E5\u9519\u8BEF"}`);
     } finally {
@@ -6440,6 +6912,31 @@ var ReviewPanelView = class extends import_obsidian3.ItemView {
     }, 50);
   }
   async onClose() {
+    try {
+      this.stopSpeechPlayback();
+    } catch (error) {
+    }
+    try {
+      if (this.isRecording) {
+        await this.stopRecording();
+      }
+    } catch (error) {
+    }
+    try {
+      this.cleanupTencentRealtimeAudioNodes();
+    } catch (error) {
+    }
+    try {
+      this.stopWaveformAnimation();
+    } catch (error) {
+    }
+    if (this.recordingStream) {
+      try {
+        this.recordingStream.getTracks().forEach((track) => track.stop());
+      } catch (error) {
+      }
+      this.recordingStream = null;
+    }
   }
 };
 var FilePickerModal = class extends import_obsidian3.FuzzySuggestModal {
@@ -6536,7 +7033,9 @@ var ReviewAssistantPlugin = class extends import_obsidian4.Plugin {
     if (!url || !url.trim()) {
       throw new Error("\u8BF7\u5148\u914D\u7F6E\u5728\u7EBF\u5347\u7EA7\u6E05\u5355 URL");
     }
-    const text = await fetchRemoteText(url.trim());
+    const trimmed = url.trim();
+    assertSafeUpdateUrl(trimmed);
+    const text = await fetchRemoteText(trimmed, true);
     return normalizeUpdateManifest(JSON.parse(text));
   }
   async checkOnlineUpdate(showNotice = true) {
@@ -6603,18 +7102,32 @@ var ReviewAssistantPlugin = class extends import_obsidian4.Plugin {
       const pluginDir = this.getPluginDir();
       const timestamp = (/* @__PURE__ */ new Date()).toISOString().replace(/[-:T.Z]/g, "").slice(0, 14);
       const files = [
-        { name: "main.js", url: manifest.mainJsUrl },
-        { name: "styles.css", url: manifest.stylesCssUrl },
-        ...manifest.manifestUrl ? [{ name: "manifest.json", url: manifest.manifestUrl }] : []
+        { name: "main.js", url: manifest.mainJsUrl, sha256: manifest.mainJsSha256 || "" },
+        { name: "styles.css", url: manifest.stylesCssUrl, sha256: manifest.stylesSha256 || "" },
+        ...manifest.manifestUrl ? [{ name: "manifest.json", url: manifest.manifestUrl, sha256: "" }] : []
       ];
       for (const file of files) {
         const path = `${pluginDir}/${file.name}`;
         const current = await this.app.vault.adapter.read(path);
         await this.app.vault.adapter.write(`${path}.bak-${timestamp}`, current);
       }
+      let anyMissingHash = false;
       for (const file of files) {
-        const nextContent = await fetchRemoteText(file.url);
+        assertSafeUpdateUrl(file.url);
+        const nextContent = await fetchRemoteText(file.url, true);
+        if (file.sha256) {
+          const actualHash = computeSha256Hex(nextContent);
+          if (actualHash !== file.sha256) {
+            new import_obsidian4.Notice("\u5B8C\u6574\u6027\u6821\u9A8C\u5931\u8D25\uFF0C\u5DF2\u4E2D\u6B62\u66F4\u65B0");
+            throw new Error(`\u5B8C\u6574\u6027\u6821\u9A8C\u5931\u8D25\uFF1A${file.name} sha256 \u4E0D\u5339\u914D\uFF08\u671F\u671B ${file.sha256.slice(0, 12)}\u2026\uFF0C\u5B9E\u9645 ${actualHash.slice(0, 12)}\u2026\uFF09`);
+          }
+        } else {
+          anyMissingHash = true;
+        }
         await this.app.vault.adapter.write(`${pluginDir}/${file.name}`, nextContent);
+      }
+      if (anyMissingHash) {
+        new import_obsidian4.Notice("\u26A0\uFE0F \u672C\u6B21\u66F4\u65B0\u672A\u63D0\u4F9B\u5B8C\u6574\u6027\u6821\u9A8C");
       }
       new import_obsidian4.Notice(`\u5347\u7EA7\u5B8C\u6210\uFF1A${manifest.version}\u3002\u8BF7\u91CD\u542F Obsidian \u6216\u91CD\u65B0\u542F\u7528\u63D2\u4EF6\u751F\u6548`);
     } catch (error) {
@@ -6726,9 +7239,11 @@ var ReviewAssistantPlugin = class extends import_obsidian4.Plugin {
       if (!material) {
         throw new Error("\u65E0\u6CD5\u89E3\u6790\u8FF0\u804C\u6750\u6599");
       }
+      const promptContext = await this.getBusinessKnowledgeService().getPromptContext(material.role);
       const evaluation = await this.aiService.generateEvaluation(
         material,
-        material.conversation || []
+        material.conversation || [],
+        promptContext
       );
       await this.dataService.saveEvaluation(activeFile.path, evaluation);
       await this.dataService.saveEvaluationReport(material, evaluation, activeFile.path);
@@ -6754,5 +7269,17 @@ var ReviewAssistantPlugin = class extends import_obsidian4.Plugin {
    */
   getDataService() {
     return this.dataService;
+  }
+  /**
+   * 获取业务知识包服务(懒加载)
+   */
+  getBusinessKnowledgeService() {
+    if (!this.businessKnowledgeService) {
+      this.businessKnowledgeService = new BusinessKnowledgeService(
+        this.app,
+        () => this.settingsManager.get("storagePath") || DEFAULT_SETTINGS.storagePath
+      );
+    }
+    return this.businessKnowledgeService;
   }
 };
