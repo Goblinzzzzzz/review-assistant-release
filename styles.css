@@ -286,6 +286,79 @@
   font-size: 12px;
 }
 
+.review-workbench-context {
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--review-border);
+  background: var(--background-secondary);
+  flex-shrink: 0;
+}
+
+.review-ai-basis {
+  padding: 10px 12px;
+  border: 1px solid rgba(var(--review-brand-rgb), 0.22);
+  border-radius: 10px;
+  background: var(--review-soft);
+}
+
+.review-ai-basis-title {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text-normal);
+}
+
+.review-ai-basis-desc {
+  margin-top: 3px;
+  font-size: 11px;
+  line-height: 1.45;
+  color: var(--text-muted);
+}
+
+.review-ai-basis-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 7px;
+}
+
+.review-ai-basis-pill {
+  padding: 3px 7px;
+  border-radius: 999px;
+  background: var(--background-primary);
+  color: var(--review-brand);
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.review-context-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.review-context-item {
+  min-width: 0;
+  padding: 8px 10px;
+  border: 1px solid var(--review-border);
+  border-radius: 8px;
+  background: var(--background-primary);
+}
+
+.review-context-label {
+  font-size: 10px;
+  color: var(--text-faint);
+}
+
+.review-context-value {
+  margin-top: 2px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-normal);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 /* People strip */
 .review-people-strip {
   display: flex;
@@ -759,6 +832,27 @@
   flex-shrink: 0;
 }
 
+.review-phase-card {
+  padding: 9px 11px;
+  margin-bottom: 8px;
+  border-radius: 8px;
+  background: var(--background-secondary);
+  border: 1px solid var(--review-border);
+}
+
+.review-phase-title {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--text-normal);
+}
+
+.review-phase-desc {
+  margin-top: 3px;
+  font-size: 10px;
+  line-height: 1.45;
+  color: var(--text-muted);
+}
+
 .review-question-card {
   padding: 9px 11px;
   margin-bottom: 8px;
@@ -851,6 +945,13 @@
 
 .review-input-box:focus-within {
   border-color: rgba(var(--review-brand-rgb), 0.7);
+}
+
+.review-input-hint {
+  margin-top: 6px;
+  font-size: 10px;
+  line-height: 1.4;
+  color: var(--text-faint);
 }
 
 .review-answer-input {
@@ -1008,6 +1109,12 @@ body.theme-light .review-message-row.user .review-message-bubble {
 
 body.theme-light .review-workbench {
   --review-soft: rgba(var(--review-brand-rgb), 0.1);
+}
+
+@media (max-width: 520px) {
+  .review-context-grid {
+    grid-template-columns: 1fr;
+  }
 }
 
 @media (max-width: 340px) {
