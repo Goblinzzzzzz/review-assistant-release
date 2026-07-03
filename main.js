@@ -5461,7 +5461,7 @@ var ReviewPanelView = class extends import_obsidian3.ItemView {
       this.activeIndex = firstReadyIndex;
       const active = this.sessionItems[firstReadyIndex];
       this.conversationHistory = active.material && active.material.conversation || [];
-      this.followUpCount = this.conversationHistory.filter((message) => message.role === "assistant").length;
+      this.followUpCount = this.getCurrentTopicFollowUpCount();
       this.statusText = `${active.user.name} \u6750\u6599\u5C31\u7EEA`;
     }
   }
@@ -5484,11 +5484,24 @@ var ReviewPanelView = class extends import_obsidian3.ItemView {
     this.sessionItems[index].status = "active";
     this.activeIndex = index;
     this.conversationHistory = material.conversation || [];
-    this.followUpCount = this.conversationHistory.filter((message) => message.role === "assistant").length;
+    this.followUpCount = this.getCurrentTopicFollowUpCount();
     this.currentQuestion = "";
     this.currentAnswer = "";
     this.statusText = `${material.userName} \u8FF0\u804C\u4E2D`;
     this.render();
+  }
+  getCurrentTopicFollowUpCount() {
+    let count = 0;
+    for (let i = this.conversationHistory.length - 1; i >= 0; i--) {
+      const message = this.conversationHistory[i];
+      if (message.role === "assistant" && message.type === "question") {
+        break;
+      }
+      if (message.role === "assistant" && message.type === "follow-up") {
+        count += 1;
+      }
+    }
+    return count;
   }
   get activeItem() {
     return this.sessionItems[this.activeIndex];
@@ -5791,7 +5804,7 @@ var ReviewPanelView = class extends import_obsidian3.ItemView {
         item.material = material;
         item.status = item.status === "done" ? "done" : "active";
         this.conversationHistory = material.conversation || [];
-        this.followUpCount = this.conversationHistory.filter((message) => message.role === "assistant").length;
+        this.followUpCount = this.getCurrentTopicFollowUpCount();
         this.statusText = `${item.user.name} \u8FF0\u804C\u4E2D`;
       }
     } else {
@@ -6153,6 +6166,7 @@ var ReviewPanelView = class extends import_obsidian3.ItemView {
           this.currentAnswer = ((_a2 = this.answerInput) == null ? void 0 : _a2.value) || "";
           this.answerInput.style.height = "auto";
           this.answerInput.style.height = Math.min(this.answerInput.scrollHeight, 120) + "px";
+          this.updateSubmitButtonState();
         });
         const mic = box.createEl("button", { cls: `review-mic-button ${this.isRecording ? "recording" : ""}`, text: this.isRecording ? "\u25A0" : "\u{1F399}" });
         mic.title = "\u8BED\u97F3\u8F93\u5165";
@@ -6534,6 +6548,7 @@ var ReviewPanelView = class extends import_obsidian3.ItemView {
       this.answerInput.style.height = "auto";
       this.answerInput.style.height = Math.min(this.answerInput.scrollHeight, 120) + "px";
       this.answerInput.scrollTop = this.answerInput.scrollHeight;
+      this.updateSubmitButtonState();
     }
   }
   updateRecordingLabel(text) {
@@ -6734,7 +6749,7 @@ var ReviewPanelView = class extends import_obsidian3.ItemView {
       ask.title = this.conversationHistory.length ? "\u6839\u636E\u5DF2\u6709\u95EE\u7B54\u7EE7\u7EED\u8FFD\u95EE" : "\u57FA\u4E8E\u8FF0\u804C\u6750\u6599\u751F\u6210\u7B2C\u4E00\u4E2A\u95EE\u9898";
       ask.disabled = this.isProcessing || !this.activeMaterial;
       ask.addEventListener("click", () => this.generateQuestion(false));
-      const submit = toolbar.createEl("button", { cls: "review-secondary-btn", text: "\u63D0\u4EA4\u5E76\u8FFD\u95EE" });
+      const submit = toolbar.createEl("button", { cls: "review-secondary-btn", text: "\u63D0\u4EA4\u5E76\u8FFD\u95EE", attr: { "data-review-submit-answer": "true" } });
       submit.title = "\u4FDD\u5B58\u5F53\u524D\u56DE\u7B54\uFF0C\u5E76\u81EA\u52A8\u751F\u6210\u4E0B\u4E00\u4E2A\u8FFD\u95EE";
       submit.disabled = this.isProcessing || !this.currentAnswer.trim();
       submit.addEventListener("click", () => this.submitAnswer());
@@ -6757,7 +6772,7 @@ var ReviewPanelView = class extends import_obsidian3.ItemView {
       item.material = material || void 0;
       item.status = "active";
       this.conversationHistory = (material == null ? void 0 : material.conversation) || [];
-      this.followUpCount = this.conversationHistory.filter((message) => message.role === "assistant").length;
+      this.followUpCount = this.getCurrentTopicFollowUpCount();
       this.statusText = `${item.user.name} \u8FF0\u804C\u4E2D`;
       const leaf = this.app.workspace.getLeaf("tab");
       await leaf.openFile(file);
@@ -6772,6 +6787,7 @@ var ReviewPanelView = class extends import_obsidian3.ItemView {
       return;
     }
     const maxRounds = this.plugin.getSettingsManager().get("maxFollowUpRounds");
+    this.followUpCount = this.getCurrentTopicFollowUpCount();
     if (!forceNew && this.conversationHistory.length > 0 && this.followUpCount >= maxRounds) {
       new import_obsidian3.Notice(`\u5DF2\u8FBE\u5230\u6700\u5927\u8FFD\u95EE\u8F6E\u6570\uFF08${maxRounds}\u8F6E\uFF09`);
       return;
@@ -6784,14 +6800,15 @@ var ReviewPanelView = class extends import_obsidian3.ItemView {
       if (this.conversationHistory.length === 0 || forceNew) {
         const questions = await this.plugin.getAIService().generateInitialQuestions(this.activeMaterial, promptContext);
         if (questions.length > 0) {
-          const question = forceNew && questions.length > 1 ? questions[1] : questions[0];
+          const question = forceNew && this.conversationHistory.length > 0 && questions.length > 1 ? questions.find((candidate) => !this.conversationHistory.some((message) => message.role === "assistant" && message.content.trim() === candidate.trim())) || questions[1] : questions[0];
           this.currentQuestion = question;
+          this.followUpCount = 0;
           const message = {
             id: Date.now().toString(36),
             timestamp: (/* @__PURE__ */ new Date()).toISOString(),
             role: "assistant",
             content: question,
-            type: forceNew ? "follow-up" : "question"
+            type: "question"
           };
           this.conversationHistory.push(message);
           await this.saveConversation();
@@ -6824,6 +6841,13 @@ var ReviewPanelView = class extends import_obsidian3.ItemView {
       this.statusText = `${((_a2 = this.activeItem) == null ? void 0 : _a2.user.name) || ""} \u8FF0\u804C\u4E2D`;
       this.currentAnswer = "";
       this.render();
+    }
+  }
+  updateSubmitButtonState() {
+    const root = this.contentEl || this.containerEl;
+    const submit = root == null ? void 0 : root.querySelector("[data-review-submit-answer]");
+    if (submit) {
+      submit.disabled = this.isProcessing || !this.currentAnswer.trim();
     }
   }
   async submitAnswer() {
